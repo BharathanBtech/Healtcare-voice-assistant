@@ -66,15 +66,30 @@ const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
+  console.log('🔍 Auth Debug - authHeader:', authHeader);
+  console.log('🔍 Auth Debug - token:', token);
+  console.log('🔍 Auth Debug - token type:', typeof token);
+  console.log('🔍 Auth Debug - token length:', token ? token.length : 'null');
+
   if (!token) {
+    console.log('❌ No token provided');
     return res.status(401).json({ error: 'Access token required' });
+  }
+
+  // Check if token looks like a valid JWT (should have 3 parts separated by dots)
+  if (typeof token !== 'string' || token.split('.').length !== 3) {
+    console.log('❌ Token format invalid - not a valid JWT structure');
+    return res.status(401).json({ error: 'Invalid token format' });
   }
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
+    console.log('✅ Token decoded successfully:', decoded);
+    
     const session = await db.getUserSession(decoded.sessionToken);
     
     if (!session || !session.is_active) {
+      console.log('❌ Session not found or inactive');
       return res.status(403).json({ error: 'Invalid or expired session' });
     }
 
@@ -85,10 +100,17 @@ const authenticateToken = async (req, res, next) => {
       role: session.role
     };
     req.sessionToken = decoded.sessionToken;
+    console.log('✅ User authenticated:', req.user.username);
     next();
   } catch (error) {
-    console.error('Token verification error:', error);
-    return res.status(403).json({ error: 'Invalid token' });
+    console.error('❌ Token verification error:', error);
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ error: 'Invalid token format' });
+    } else if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired' });
+    } else {
+      return res.status(403).json({ error: 'Token verification failed' });
+    }
   }
 };
 
@@ -447,6 +469,11 @@ app.put('/api/voice-sessions/:id', authenticateToken, async (req, res) => {
   try {
     const sessionId = req.params.id;
     const updateData = req.body;
+
+    // Ensure session_state is never null
+    if (updateData.session_state === null || updateData.session_state === undefined) {
+      updateData.session_state = 'active';
+    }
 
     const session = await db.updateVoiceSession(sessionId, updateData);
     res.json({ success: true, data: session });

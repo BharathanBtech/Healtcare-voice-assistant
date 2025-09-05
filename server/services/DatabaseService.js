@@ -629,7 +629,7 @@ class DatabaseService {
       RETURNING *;
     `;
     const values = [
-      updateData.session_state,
+      updateData.session_state || 'active', // Provide default value if null
       JSON.stringify(updateData.collected_data || {}),
       JSON.stringify(updateData.field_statuses || {}),
       JSON.stringify(updateData.transcript || []),
