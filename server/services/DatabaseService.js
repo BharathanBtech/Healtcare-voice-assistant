@@ -116,7 +116,20 @@ class DatabaseService {
     const result = await this.query(query, [userId]);
     return result.rows.map(row => ({
       ...row,
-      configuration: JSON.parse(row.configuration || '{}')
+      configuration: (() => {
+        try {
+          console.log('🔍 Debug - provider configuration value:', row.configuration, 'type:', typeof row.configuration);
+          // If it's already an object, return it directly
+          if (typeof row.configuration === 'object' && row.configuration !== null) {
+            return row.configuration;
+          }
+          // If it's a string, try to parse it
+          return row.configuration ? JSON.parse(row.configuration) : {};
+        } catch (error) {
+          console.error('Error parsing provider configuration:', row.configuration, error);
+          return {};
+        }
+      })()
     }));
   }
 
@@ -127,17 +140,33 @@ class DatabaseService {
     
     return {
       ...result.rows[0],
-      configuration: JSON.parse(result.rows[0].configuration || '{}')
+      configuration: (() => {
+        try {
+          return result.rows[0].configuration ? JSON.parse(result.rows[0].configuration) : {};
+        } catch (error) {
+          console.error('Error parsing provider configuration:', result.rows[0].configuration, error);
+          return {};
+        }
+      })()
     };
   }
 
   // Tool management methods
   async createTool(toolData) {
     return await this.transaction(async (client) => {
-      // Insert tool
+      // Insert tool (or update if exists)
       const toolQuery = `
         INSERT INTO tools (id, user_id, name, description, template_id, initial_prompt, conclusion_prompt, intermediate_prompts)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (id) 
+        DO UPDATE SET 
+          name = EXCLUDED.name,
+          description = EXCLUDED.description,
+          template_id = EXCLUDED.template_id,
+          initial_prompt = EXCLUDED.initial_prompt,
+          conclusion_prompt = EXCLUDED.conclusion_prompt,
+          intermediate_prompts = EXCLUDED.intermediate_prompts,
+          updated_at = CURRENT_TIMESTAMP
         RETURNING *;
       `;
       const toolValues = [
@@ -146,14 +175,16 @@ class DatabaseService {
         toolData.name,
         toolData.description,
         toolData.template_id,
-        toolData.initial_prompt,
-        toolData.conclusion_prompt,
-        JSON.stringify(toolData.intermediate_prompts || [])
+        toolData.initialPrompt || toolData.initial_prompt,
+        toolData.conclusionPrompt || toolData.conclusion_prompt,
+        JSON.stringify(toolData.intermediatePrompts || toolData.intermediate_prompts || [])
       ];
       const toolResult = await client.query(toolQuery, toolValues);
       const tool = toolResult.rows[0];
 
-      // Insert fields if provided
+      // Delete existing fields and insert new ones
+      await client.query('DELETE FROM tool_fields WHERE tool_id = $1', [tool.id]);
+      
       if (toolData.fields && toolData.fields.length > 0) {
         for (let i = 0; i < toolData.fields.length; i++) {
           const field = toolData.fields[i];
@@ -167,7 +198,7 @@ class DatabaseService {
             field.name,
             field.type,
             field.required || false,
-            field.instructional_prompt,
+            field.instructionalPrompt || field.instructional_prompt,
             JSON.stringify(field.options || []),
             JSON.stringify(field.validation || {}),
             i
@@ -176,8 +207,11 @@ class DatabaseService {
         }
       }
 
-      // Insert data handoff config if provided
-      if (toolData.data_handoff) {
+      // Delete existing handoff config and insert new one if provided
+      await client.query('DELETE FROM data_handoff_configs WHERE tool_id = $1', [tool.id]);
+      
+      const dataHandoff = toolData.dataHandoff || toolData.data_handoff;
+      if (dataHandoff) {
         const handoffQuery = `
           INSERT INTO data_handoff_configs (id, tool_id, handoff_type, api_config, database_config, field_mappings)
           VALUES ($1, $2, $3, $4, $5, $6);
@@ -185,10 +219,10 @@ class DatabaseService {
         const handoffValues = [
           crypto.randomUUID(),
           tool.id,
-          toolData.data_handoff.type,
-          toolData.data_handoff.api ? JSON.stringify(toolData.data_handoff.api) : null,
-          toolData.data_handoff.database ? JSON.stringify(toolData.data_handoff.database) : null,
-          JSON.stringify(toolData.data_handoff.field_mappings || [])
+          dataHandoff.type,
+          dataHandoff.api ? JSON.stringify(dataHandoff.api) : null,
+          dataHandoff.database ? JSON.stringify(dataHandoff.database) : null,
+          JSON.stringify(dataHandoff.fieldMappings || dataHandoff.field_mappings || [])
         ];
         await client.query(handoffQuery, handoffValues);
       }
@@ -231,17 +265,95 @@ class DatabaseService {
       template_id: row.template_id,
       initial_prompt: row.initial_prompt,
       conclusion_prompt: row.conclusion_prompt,
-      intermediate_prompts: JSON.parse(row.intermediate_prompts || '[]'),
+      intermediate_prompts: (() => {
+        try {
+          console.log('🔍 Debug - getToolsByUser intermediate_prompts value:', row.intermediate_prompts, 'type:', typeof row.intermediate_prompts);
+          // If it's already an object/array, return it directly
+          if (typeof row.intermediate_prompts === 'object' && row.intermediate_prompts !== null) {
+            return row.intermediate_prompts;
+          }
+          // If it's a string, try to parse it
+          return row.intermediate_prompts ? JSON.parse(row.intermediate_prompts) : [];
+        } catch (error) {
+          console.error('Error parsing intermediate_prompts:', row.intermediate_prompts, error);
+          return [];
+        }
+      })(),
       fields: row.fields.map(field => ({
         ...field,
-        options: JSON.parse(field.options || '[]'),
-        validation: JSON.parse(field.validation || '{}')
+        options: (() => {
+          try {
+            console.log('🔍 Debug - getToolsByUser field options value:', field.options, 'type:', typeof field.options);
+            // If it's already an object/array, return it directly
+            if (typeof field.options === 'object' && field.options !== null) {
+              return field.options;
+            }
+            // If it's a string, try to parse it
+            return field.options ? JSON.parse(field.options) : [];
+          } catch (error) {
+            console.error('Error parsing field options:', field.options, error);
+            return [];
+          }
+        })(),
+        validation: (() => {
+          try {
+            console.log('🔍 Debug - getToolsByUser field validation value:', field.validation, 'type:', typeof field.validation);
+            // If it's already an object, return it directly
+            if (typeof field.validation === 'object' && field.validation !== null) {
+              return field.validation;
+            }
+            // If it's a string, try to parse it
+            return field.validation ? JSON.parse(field.validation) : {};
+          } catch (error) {
+            console.error('Error parsing field validation:', field.validation, error);
+            return {};
+          }
+        })()
       })),
       data_handoff: row.handoff_type ? {
         type: row.handoff_type,
-        api: row.api_config ? JSON.parse(row.api_config) : null,
-        database: row.database_config ? JSON.parse(row.database_config) : null,
-        field_mappings: JSON.parse(row.field_mappings || '[]')
+        api: (() => {
+          try {
+            console.log('🔍 Debug - getToolsByUser api_config value:', row.api_config, 'type:', typeof row.api_config);
+            // If it's already an object, return it directly
+            if (typeof row.api_config === 'object' && row.api_config !== null) {
+              return row.api_config;
+            }
+            // If it's a string, try to parse it
+            return row.api_config ? JSON.parse(row.api_config) : null;
+          } catch (error) {
+            console.error('Error parsing api_config:', row.api_config, error);
+            return null;
+          }
+        })(),
+        database: (() => {
+          try {
+            console.log('🔍 Debug - getToolsByUser database_config value:', row.database_config, 'type:', typeof row.database_config);
+            // If it's already an object, return it directly
+            if (typeof row.database_config === 'object' && row.database_config !== null) {
+              return row.database_config;
+            }
+            // If it's a string, try to parse it
+            return row.database_config ? JSON.parse(row.database_config) : null;
+          } catch (error) {
+            console.error('Error parsing database_config:', row.database_config, error);
+            return null;
+          }
+        })(),
+        field_mappings: (() => {
+          try {
+            console.log('🔍 Debug - getToolsByUser field_mappings value:', row.field_mappings, 'type:', typeof row.field_mappings);
+            // If it's already an object/array, return it directly
+            if (typeof row.field_mappings === 'object' && row.field_mappings !== null) {
+              return row.field_mappings;
+            }
+            // If it's a string, try to parse it
+            return row.field_mappings ? JSON.parse(row.field_mappings) : [];
+          } catch (error) {
+            console.error('Error parsing field_mappings:', row.field_mappings, error);
+            return [];
+          }
+        })()
       } : null,
       created_at: row.created_at,
       updated_at: row.updated_at
@@ -284,17 +396,95 @@ class DatabaseService {
       template_id: row.template_id,
       initial_prompt: row.initial_prompt,
       conclusion_prompt: row.conclusion_prompt,
-      intermediate_prompts: JSON.parse(row.intermediate_prompts || '[]'),
+      intermediate_prompts: (() => {
+        try {
+          console.log('🔍 Debug - intermediate_prompts value:', row.intermediate_prompts, 'type:', typeof row.intermediate_prompts);
+          // If it's already an object/array, return it directly
+          if (typeof row.intermediate_prompts === 'object' && row.intermediate_prompts !== null) {
+            return row.intermediate_prompts;
+          }
+          // If it's a string, try to parse it
+          return row.intermediate_prompts ? JSON.parse(row.intermediate_prompts) : [];
+        } catch (error) {
+          console.error('Error parsing intermediate_prompts:', row.intermediate_prompts, error);
+          return [];
+        }
+      })(),
       fields: row.fields.map(field => ({
         ...field,
-        options: JSON.parse(field.options || '[]'),
-        validation: JSON.parse(field.validation || '{}')
+        options: (() => {
+          try {
+            console.log('🔍 Debug - field options value:', field.options, 'type:', typeof field.options);
+            // If it's already an object/array, return it directly
+            if (typeof field.options === 'object' && field.options !== null) {
+              return field.options;
+            }
+            // If it's a string, try to parse it
+            return field.options ? JSON.parse(field.options) : [];
+          } catch (error) {
+            console.error('Error parsing field options:', field.options, error);
+            return [];
+          }
+        })(),
+        validation: (() => {
+          try {
+            console.log('🔍 Debug - field validation value:', field.validation, 'type:', typeof field.validation);
+            // If it's already an object, return it directly
+            if (typeof field.validation === 'object' && field.validation !== null) {
+              return field.validation;
+            }
+            // If it's a string, try to parse it
+            return field.validation ? JSON.parse(field.validation) : {};
+          } catch (error) {
+            console.error('Error parsing field validation:', field.validation, error);
+            return {};
+          }
+        })()
       })),
       data_handoff: row.handoff_type ? {
         type: row.handoff_type,
-        api: row.api_config ? JSON.parse(row.api_config) : null,
-        database: row.database_config ? JSON.parse(row.database_config) : null,
-        field_mappings: JSON.parse(row.field_mappings || '[]')
+        api: (() => {
+          try {
+            console.log('🔍 Debug - api_config value:', row.api_config, 'type:', typeof row.api_config);
+            // If it's already an object, return it directly
+            if (typeof row.api_config === 'object' && row.api_config !== null) {
+              return row.api_config;
+            }
+            // If it's a string, try to parse it
+            return row.api_config ? JSON.parse(row.api_config) : null;
+          } catch (error) {
+            console.error('Error parsing api_config:', row.api_config, error);
+            return null;
+          }
+        })(),
+        database: (() => {
+          try {
+            console.log('🔍 Debug - database_config value:', row.database_config, 'type:', typeof row.database_config);
+            // If it's already an object, return it directly
+            if (typeof row.database_config === 'object' && row.database_config !== null) {
+              return row.database_config;
+            }
+            // If it's a string, try to parse it
+            return row.database_config ? JSON.parse(row.database_config) : null;
+          } catch (error) {
+            console.error('Error parsing database_config:', row.database_config, error);
+            return null;
+          }
+        })(),
+        field_mappings: (() => {
+          try {
+            console.log('🔍 Debug - field_mappings value:', row.field_mappings, 'type:', typeof row.field_mappings);
+            // If it's already an object/array, return it directly
+            if (typeof row.field_mappings === 'object' && row.field_mappings !== null) {
+              return row.field_mappings;
+            }
+            // If it's a string, try to parse it
+            return row.field_mappings ? JSON.parse(row.field_mappings) : [];
+          } catch (error) {
+            console.error('Error parsing field_mappings:', row.field_mappings, error);
+            return [];
+          }
+        })()
       } : null,
       created_at: row.created_at,
       updated_at: row.updated_at

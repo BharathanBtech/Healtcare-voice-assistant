@@ -278,6 +278,7 @@ const ToolCreator: React.FC = () => {
   const templates = ToolService.getToolTemplates();
 
   const handleTemplateSelect = (templateId: string | null) => {
+    console.log('🔍 Template selected:', templateId);
     setSelectedTemplate(templateId);
     
     if (templateId === 'custom') {
@@ -382,28 +383,42 @@ const ToolCreator: React.FC = () => {
   };
 
   const validateCurrentStep = (): boolean => {
+    let isValid = false;
     switch (currentStep) {
       case 1:
-        return selectedTemplate !== null;
+        isValid = selectedTemplate !== null;
+        console.log('🔍 Step 1 validation - selectedTemplate:', selectedTemplate, 'isValid:', isValid);
+        return isValid;
       case 2:
-        return !!(tool.name && tool.description && tool.initialPrompt && tool.conclusionPrompt);
+        isValid = !!(tool.name && tool.description && tool.initialPrompt && tool.conclusionPrompt);
+        console.log('🔍 Step 2 validation - isValid:', isValid);
+        return isValid;
       case 3:
-        return (tool.fields?.length || 0) > 0;
+        isValid = (tool.fields?.length || 0) > 0;
+        console.log('🔍 Step 3 validation - fields length:', tool.fields?.length, 'isValid:', isValid);
+        return isValid;
       case 4:
         if (tool.dataHandoff?.type === 'api') {
-          return !!(tool.dataHandoff.api?.endpoint);
+          isValid = !!(tool.dataHandoff.api?.endpoint);
         } else if (tool.dataHandoff?.type === 'database') {
-          return !!(tool.dataHandoff.database?.hostname && tool.dataHandoff.database?.database);
+          isValid = !!(tool.dataHandoff.database?.hostname && tool.dataHandoff.database?.database);
+        } else {
+          isValid = true;
         }
-        return true;
+        console.log('🔍 Step 4 validation - isValid:', isValid);
+        return isValid;
       default:
         return true;
     }
   };
 
   const nextStep = () => {
+    console.log('🔍 Next button clicked - currentStep:', currentStep, 'validateCurrentStep():', validateCurrentStep());
     if (validateCurrentStep() && currentStep < 4) {
+      console.log('🔍 Moving to next step:', currentStep + 1);
       setCurrentStep(currentStep + 1);
+    } else {
+      console.log('🔍 Cannot move to next step - validation failed or at last step');
     }
   };
 
@@ -1136,7 +1151,7 @@ const ToolCreator: React.FC = () => {
       </div>
 
       {/* Navigation */}
-      <div className="navigation-section">
+      <div className="navigation-section" style={{ marginTop: '20px', padding: '20px', backgroundColor: '#f8f9fa', border: '2px solid #007bff', borderRadius: '8px' }}>
         <div className="card">
           <div className="card-footer">
             <div className="flex justify-between">
@@ -1158,23 +1173,39 @@ const ToolCreator: React.FC = () => {
                     className={`btn btn-primary ${!validateCurrentStep() ? 'opacity-50 cursor-not-allowed' : ''}`}
                     onClick={nextStep}
                     disabled={!validateCurrentStep()}
+                    style={{ 
+                      padding: '12px 24px', 
+                      fontSize: '16px', 
+                      fontWeight: 'bold',
+                      backgroundColor: validateCurrentStep() ? '#007bff' : '#6c757d',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: validateCurrentStep() ? 'pointer' : 'not-allowed'
+                    }}
                   >
                     Next
                   </button>
                 ) : (
                   <button
                     type="button"
-                    className="btn btn-success btn-lg"
+                    className="btn btn-success btn-lg create-tool-btn"
                     onClick={saveTool}
                     disabled={isLoading || !validateCurrentStep()}
                   >
                     {isLoading ? (
                       <>
                         <span className="loading-spinner mr-2"></span>
-                        Creating...
+                        Creating Tool...
                       </>
                     ) : (
-                      'Create Tool'
+                      <>
+                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                                d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                        Create Your Tool
+                      </>
                     )}
                   </button>
                 )}
@@ -1445,6 +1476,50 @@ const ToolCreator: React.FC = () => {
         .navigation-section .card {
           box-shadow: var(--shadow-xl);
           border: 2px solid var(--primary-color);
+        }
+
+        .create-tool-btn {
+          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+          border: none;
+          box-shadow: 0 4px 14px 0 rgba(16, 185, 129, 0.3);
+          font-weight: 600;
+          letter-spacing: 0.025em;
+          transition: all 0.3s ease;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .create-tool-btn:hover:not(:disabled) {
+          background: linear-gradient(135deg, #059669 0%, #047857 100%);
+          box-shadow: 0 6px 20px 0 rgba(16, 185, 129, 0.4);
+          transform: translateY(-2px);
+        }
+
+        .create-tool-btn:active:not(:disabled) {
+          transform: translateY(0);
+          box-shadow: 0 2px 8px 0 rgba(16, 185, 129, 0.3);
+        }
+
+        .create-tool-btn:disabled {
+          background: #9ca3af;
+          box-shadow: none;
+          transform: none;
+          cursor: not-allowed;
+        }
+
+        .create-tool-btn::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: -100%;
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+          transition: left 0.5s;
+        }
+
+        .create-tool-btn:hover:not(:disabled)::before {
+          left: 100%;
         }
 
         .loading-spinner {
