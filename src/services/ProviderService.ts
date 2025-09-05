@@ -51,9 +51,9 @@ export class ProviderService {
           required: true,
           placeholder: 'sk-...',
           validation: {
-            pattern: '^sk-[a-zA-Z0-9]{48}$',
-            minLength: 51,
-            maxLength: 51
+            pattern: '^sk-',
+            minLength: 20,
+            maxLength: 200
           }
         }
       ],
@@ -195,9 +195,9 @@ export class ProviderService {
           required: true,
           placeholder: 'sk-...',
           validation: {
-            pattern: '^sk-[a-zA-Z0-9]{48}$',
-            minLength: 51,
-            maxLength: 51
+            pattern: '^sk-',
+            minLength: 20,
+            maxLength: 200
           }
         }
       ],

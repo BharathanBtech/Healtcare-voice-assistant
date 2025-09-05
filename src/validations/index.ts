@@ -104,9 +104,9 @@ export const ValidationPatterns = {
   zipCode: /^\d{5}(-\d{4})?$/,
   url: /^https?:\/\/.+/,
   apiKey: {
-    openai: /^sk-[a-zA-Z0-9]{48}$/,
-    anthropic: /^sk-ant-[a-zA-Z0-9\-_]{95}$/,
-    azure: /^[a-f0-9]{32}$/
+    openai: /^sk-[a-zA-Z0-9\-_]{20,}$/,
+    anthropic: /^sk-ant-[a-zA-Z0-9\-_]{50,}$/,
+    azure: /^[a-f0-9]{32,}$/
   },
   awsAccessKey: /^AKIA[0-9A-Z]{16}$/,
   date: /^\d{4}-\d{2}-\d{2}$/,
@@ -178,7 +178,7 @@ export const ProviderValidationRules = {
   openaiApiKey: {
     required: true,
     pattern: ValidationPatterns.apiKey.openai,
-    message: 'OpenAI API key must start with "sk-" followed by 48 characters'
+    message: 'OpenAI API key must start with "sk-" and be at least 20 characters long'
   },
 
   anthropicApiKey: {
