@@ -204,13 +204,38 @@ app.get('/api/providers', authenticateToken, async (req, res) => {
   try {
     const configs = await db.getProviderConfigs(req.user.id);
     
-    // Decrypt credentials for response
-    const decryptedConfigs = configs.map(config => ({
-      ...config,
-      credentials: JSON.parse(encryptionService.decrypt(config.encrypted_credentials))
-    }));
+    // Decrypt credentials and organize by provider type
+    const providerConfig = {
+      stt: { type: 'openai', credentials: {}, config: {} },
+      llm: { type: 'openai', credentials: {}, config: {} },
+      tts: { type: 'openai', credentials: {}, config: {} }
+    };
 
-    res.json({ success: true, data: decryptedConfigs });
+    configs.forEach(config => {
+      const decryptedCredentials = JSON.parse(encryptionService.decrypt(config.encrypted_credentials));
+      
+      if (config.provider_type === 'stt') {
+        providerConfig.stt = {
+          type: config.provider_name,
+          credentials: decryptedCredentials,
+          config: config.configuration || {}
+        };
+      } else if (config.provider_type === 'llm') {
+        providerConfig.llm = {
+          type: config.provider_name,
+          credentials: decryptedCredentials,
+          config: config.configuration || {}
+        };
+      } else if (config.provider_type === 'tts') {
+        providerConfig.tts = {
+          type: config.provider_name,
+          credentials: decryptedCredentials,
+          config: config.configuration || {}
+        };
+      }
+    });
+
+    res.json({ success: true, data: providerConfig });
   } catch (error) {
     console.error('Get providers error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -220,33 +245,77 @@ app.get('/api/providers', authenticateToken, async (req, res) => {
 // Save provider configuration
 app.post('/api/providers', authenticateToken, async (req, res) => {
   try {
-    const { providerType, providerName, credentials, configuration } = req.body;
+    console.log('🔧 Provider config request received:', JSON.stringify(req.body, null, 2));
+    const { stt, llm, tts } = req.body;
 
-    if (!providerType || !providerName || !credentials) {
-      return res.status(400).json({ error: 'Provider type, name, and credentials required' });
+    if (!stt || !llm || !tts) {
+      console.log('❌ Missing required configurations');
+      return res.status(400).json({ error: 'STT, LLM, and TTS configurations are required' });
     }
 
-    // Encrypt credentials
-    const encryptedCredentials = encryptionService.encrypt(JSON.stringify(credentials));
+    const savedConfigs = [];
 
-    const configData = {
-      user_id: req.user.id,
-      provider_type: providerType,
-      provider_name: providerName,
-      encrypted_credentials: encryptedCredentials,
-      configuration: configuration || {}
-    };
+    // Save STT configuration
+    if (stt.type && stt.credentials) {
+      console.log('💾 Saving STT configuration...');
+      const sttConfigData = {
+        user_id: req.user.id,
+        provider_type: 'stt',
+        provider_name: stt.type,
+        encrypted_credentials: encryptionService.encrypt(JSON.stringify(stt.credentials)),
+        configuration: stt.config || {}
+      };
+      console.log('📋 STT config data:', sttConfigData);
+      const savedSttConfig = await db.saveProviderConfig(sttConfigData);
+      console.log('✅ STT config saved:', savedSttConfig);
+      savedConfigs.push(savedSttConfig);
+      
+      // Log audit event
+      await db.logAuditEvent(req.user.id, 'CREATE', 'provider_config', savedSttConfig.id, 
+                            null, { providerType: 'stt', providerName: stt.type }, 
+                            getClientIP(req), req.get('User-Agent'));
+    }
 
-    const savedConfig = await db.saveProviderConfig(configData);
+    // Save LLM configuration
+    if (llm.type && llm.credentials) {
+      const llmConfigData = {
+        user_id: req.user.id,
+        provider_type: 'llm',
+        provider_name: llm.type,
+        encrypted_credentials: encryptionService.encrypt(JSON.stringify(llm.credentials)),
+        configuration: llm.config || {}
+      };
+      const savedLlmConfig = await db.saveProviderConfig(llmConfigData);
+      savedConfigs.push(savedLlmConfig);
+      
+      // Log audit event
+      await db.logAuditEvent(req.user.id, 'CREATE', 'provider_config', savedLlmConfig.id, 
+                            null, { providerType: 'llm', providerName: llm.type }, 
+                            getClientIP(req), req.get('User-Agent'));
+    }
 
-    // Log audit event
-    await db.logAuditEvent(req.user.id, 'CREATE', 'provider_config', savedConfig.id, 
-                          null, { providerType, providerName }, 
-                          getClientIP(req), req.get('User-Agent'));
+    // Save TTS configuration
+    if (tts.type && tts.credentials) {
+      const ttsConfigData = {
+        user_id: req.user.id,
+        provider_type: 'tts',
+        provider_name: tts.type,
+        encrypted_credentials: encryptionService.encrypt(JSON.stringify(tts.credentials)),
+        configuration: tts.config || {}
+      };
+      const savedTtsConfig = await db.saveProviderConfig(ttsConfigData);
+      savedConfigs.push(savedTtsConfig);
+      
+      // Log audit event
+      await db.logAuditEvent(req.user.id, 'CREATE', 'provider_config', savedTtsConfig.id, 
+                            null, { providerType: 'tts', providerName: tts.type }, 
+                            getClientIP(req), req.get('User-Agent'));
+    }
 
-    res.json({ success: true, data: savedConfig });
+    res.json({ success: true, data: savedConfigs });
   } catch (error) {
-    console.error('Save provider error:', error);
+    console.error('❌ Save provider error:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -4,7 +4,7 @@ class EncryptionService {
   constructor() {
     // Use environment variable for encryption key in production
     this.encryptionKey = process.env.ENCRYPTION_KEY || 'healthcare-voice-agent-default-key-change-in-production';
-    this.algorithm = 'aes-256-gcm';
+    this.algorithm = 'aes-256-cbc';
     
     // Ensure key is the right length (32 bytes for AES-256)
     this.key = crypto.createHash('sha256').update(this.encryptionKey).digest();
@@ -20,15 +20,13 @@ class EncryptionService {
       if (!text) return text;
       
       const iv = crypto.randomBytes(16);
-      const cipher = crypto.createCipherGCM(this.algorithm, this.key, iv);
+      const cipher = crypto.createCipheriv('aes-256-cbc', this.key, iv);
       
       let encrypted = cipher.update(text, 'utf8', 'hex');
       encrypted += cipher.final('hex');
       
-      const tag = cipher.getAuthTag();
-      
-      // Return IV + tag + encrypted data
-      return iv.toString('hex') + ':' + tag.toString('hex') + ':' + encrypted;
+      // Return IV + encrypted data
+      return iv.toString('hex') + ':' + encrypted;
     } catch (error) {
       console.error('Encryption error:', error);
       throw new Error('Failed to encrypt data');
@@ -45,16 +43,14 @@ class EncryptionService {
       if (!encryptedData) return encryptedData;
       
       const parts = encryptedData.split(':');
-      if (parts.length !== 3) {
+      if (parts.length !== 2) {
         throw new Error('Invalid encrypted data format');
       }
       
       const iv = Buffer.from(parts[0], 'hex');
-      const tag = Buffer.from(parts[1], 'hex');
-      const encrypted = parts[2];
+      const encrypted = parts[1];
       
-      const decipher = crypto.createDecipherGCM(this.algorithm, this.key, iv);
-      decipher.setAuthTag(tag);
+      const decipher = crypto.createDecipheriv('aes-256-cbc', this.key, iv);
       
       let decrypted = decipher.update(encrypted, 'hex', 'utf8');
       decrypted += decipher.final('utf8');
