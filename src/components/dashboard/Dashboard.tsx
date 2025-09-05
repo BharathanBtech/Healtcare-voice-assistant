@@ -132,19 +132,41 @@ const Dashboard: React.FC = () => {
           <div className="card-body">
             {tools.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-icon">
-                  <svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} 
-                          d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 9.172V5L8 4z" />
-                  </svg>
+                <div className="getting-started-content">
+                  <h4 className="empty-title">Welcome to Healthcare Voice Agent</h4>
+                  <p className="empty-description">
+                    Create powerful voice interaction tools for healthcare data collection. 
+                    Your tools will help streamline patient interactions and improve data accuracy.
+                  </p>
+                  
+                  <div className="feature-highlights">
+                    <div className="feature-item">
+                      <div className="feature-icon">🎤</div>
+                      <div className="feature-text">
+                        <strong>Voice Recognition</strong>
+                        <span>Convert speech to structured data</span>
+                      </div>
+                    </div>
+                    <div className="feature-item">
+                      <div className="feature-icon">🤖</div>
+                      <div className="feature-text">
+                        <strong>AI-Powered</strong>
+                        <span>Intelligent conversation handling</span>
+                      </div>
+                    </div>
+                    <div className="feature-item">
+                      <div className="feature-icon">📊</div>
+                      <div className="feature-text">
+                        <strong>Data Integration</strong>
+                        <span>Seamless data handoff to systems</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <Link to="/tools/create" className="btn btn-primary btn-lg mt-6">
+                    Create Your First Tool
+                  </Link>
                 </div>
-                <h4 className="empty-title">No tools created yet</h4>
-                <p className="empty-description">
-                  Get started by creating your first voice interaction tool.
-                </p>
-                <Link to="/tools/create" className="btn btn-primary mt-4">
-                  Create Your First Tool
-                </Link>
               </div>
             ) : (
               <div className="tools-list">
@@ -276,21 +298,65 @@ const Dashboard: React.FC = () => {
           padding: var(--spacing-2xl) var(--spacing-lg);
         }
 
-        .empty-icon {
-          color: var(--gray-400);
-          margin-bottom: var(--spacing-lg);
+        .getting-started-content {
+          max-width: 600px;
+          margin: 0 auto;
         }
 
         .empty-title {
-          font-size: 1.25rem;
-          font-weight: 600;
+          font-size: 1.5rem;
+          font-weight: 700;
           color: var(--gray-900);
-          margin-bottom: var(--spacing-sm);
+          margin-bottom: var(--spacing-md);
         }
 
         .empty-description {
           color: var(--gray-600);
-          margin-bottom: var(--spacing-lg);
+          margin-bottom: var(--spacing-xl);
+          font-size: 1.1rem;
+          line-height: 1.6;
+        }
+
+        .feature-highlights {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: var(--spacing-lg);
+          margin-bottom: var(--spacing-xl);
+          text-align: left;
+        }
+
+        .feature-item {
+          display: flex;
+          align-items: flex-start;
+          gap: var(--spacing-md);
+          padding: var(--spacing-md);
+          background-color: var(--gray-50);
+          border-radius: var(--radius-lg);
+          border: 1px solid var(--gray-200);
+        }
+
+        .feature-icon {
+          font-size: 1.5rem;
+          flex-shrink: 0;
+          margin-top: var(--spacing-xs);
+        }
+
+        .feature-text {
+          display: flex;
+          flex-direction: column;
+          gap: var(--spacing-xs);
+        }
+
+        .feature-text strong {
+          color: var(--gray-900);
+          font-weight: 600;
+          font-size: 0.95rem;
+        }
+
+        .feature-text span {
+          color: var(--gray-600);
+          font-size: 0.875rem;
+          line-height: 1.4;
         }
 
         .tools-list {
