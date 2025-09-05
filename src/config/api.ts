@@ -17,16 +17,8 @@ export const apiClient = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     const token = AuthService.getSessionToken();
-    console.log('🔍 API Request Debug - Token:', token);
-    console.log('🔍 API Request Debug - Token type:', typeof token);
-    console.log('🔍 API Request Debug - Token length:', token ? token.length : 'null');
-    console.log('🔍 API Request Debug - Token parts:', token ? token.split('.').length : 'null');
-    
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
-      console.log('🔍 API Request Debug - Authorization header:', config.headers.Authorization);
-    } else {
-      console.log('❌ No token available for request');
     }
     return config;
   },

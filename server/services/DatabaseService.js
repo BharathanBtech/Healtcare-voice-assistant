@@ -27,7 +27,6 @@ class DatabaseService {
     try {
       const result = await this.pool.query(text, params);
       const duration = Date.now() - start;
-      console.log('📝 Executed query', { text: text.substring(0, 100), duration, rows: result.rowCount });
       return result;
     } catch (error) {
       console.error('❌ Database query error:', { text: text.substring(0, 100), error: error.message });
@@ -118,7 +117,6 @@ class DatabaseService {
       ...row,
       configuration: (() => {
         try {
-          console.log('🔍 Debug - provider configuration value:', row.configuration, 'type:', typeof row.configuration);
           // If it's already an object, return it directly
           if (typeof row.configuration === 'object' && row.configuration !== null) {
             return row.configuration;
@@ -267,7 +265,6 @@ class DatabaseService {
       conclusion_prompt: row.conclusion_prompt,
       intermediate_prompts: (() => {
         try {
-          console.log('🔍 Debug - getToolsByUser intermediate_prompts value:', row.intermediate_prompts, 'type:', typeof row.intermediate_prompts);
           // If it's already an object/array, return it directly
           if (typeof row.intermediate_prompts === 'object' && row.intermediate_prompts !== null) {
             return row.intermediate_prompts;
@@ -283,7 +280,6 @@ class DatabaseService {
         ...field,
         options: (() => {
           try {
-            console.log('🔍 Debug - getToolsByUser field options value:', field.options, 'type:', typeof field.options);
             // If it's already an object/array, return it directly
             if (typeof field.options === 'object' && field.options !== null) {
               return field.options;
@@ -297,7 +293,6 @@ class DatabaseService {
         })(),
         validation: (() => {
           try {
-            console.log('🔍 Debug - getToolsByUser field validation value:', field.validation, 'type:', typeof field.validation);
             // If it's already an object, return it directly
             if (typeof field.validation === 'object' && field.validation !== null) {
               return field.validation;
@@ -314,7 +309,6 @@ class DatabaseService {
         type: row.handoff_type,
         api: (() => {
           try {
-            console.log('🔍 Debug - getToolsByUser api_config value:', row.api_config, 'type:', typeof row.api_config);
             // If it's already an object, return it directly
             if (typeof row.api_config === 'object' && row.api_config !== null) {
               return row.api_config;
@@ -328,7 +322,6 @@ class DatabaseService {
         })(),
         database: (() => {
           try {
-            console.log('🔍 Debug - getToolsByUser database_config value:', row.database_config, 'type:', typeof row.database_config);
             // If it's already an object, return it directly
             if (typeof row.database_config === 'object' && row.database_config !== null) {
               return row.database_config;
@@ -342,7 +335,6 @@ class DatabaseService {
         })(),
         field_mappings: (() => {
           try {
-            console.log('🔍 Debug - getToolsByUser field_mappings value:', row.field_mappings, 'type:', typeof row.field_mappings);
             // If it's already an object/array, return it directly
             if (typeof row.field_mappings === 'object' && row.field_mappings !== null) {
               return row.field_mappings;
@@ -398,7 +390,6 @@ class DatabaseService {
       conclusion_prompt: row.conclusion_prompt,
       intermediate_prompts: (() => {
         try {
-          console.log('🔍 Debug - intermediate_prompts value:', row.intermediate_prompts, 'type:', typeof row.intermediate_prompts);
           // If it's already an object/array, return it directly
           if (typeof row.intermediate_prompts === 'object' && row.intermediate_prompts !== null) {
             return row.intermediate_prompts;
@@ -414,7 +405,6 @@ class DatabaseService {
         ...field,
         options: (() => {
           try {
-            console.log('🔍 Debug - field options value:', field.options, 'type:', typeof field.options);
             // If it's already an object/array, return it directly
             if (typeof field.options === 'object' && field.options !== null) {
               return field.options;
@@ -428,7 +418,6 @@ class DatabaseService {
         })(),
         validation: (() => {
           try {
-            console.log('🔍 Debug - field validation value:', field.validation, 'type:', typeof field.validation);
             // If it's already an object, return it directly
             if (typeof field.validation === 'object' && field.validation !== null) {
               return field.validation;
@@ -445,7 +434,6 @@ class DatabaseService {
         type: row.handoff_type,
         api: (() => {
           try {
-            console.log('🔍 Debug - api_config value:', row.api_config, 'type:', typeof row.api_config);
             // If it's already an object, return it directly
             if (typeof row.api_config === 'object' && row.api_config !== null) {
               return row.api_config;
@@ -459,7 +447,6 @@ class DatabaseService {
         })(),
         database: (() => {
           try {
-            console.log('🔍 Debug - database_config value:', row.database_config, 'type:', typeof row.database_config);
             // If it's already an object, return it directly
             if (typeof row.database_config === 'object' && row.database_config !== null) {
               return row.database_config;
@@ -473,7 +460,6 @@ class DatabaseService {
         })(),
         field_mappings: (() => {
           try {
-            console.log('🔍 Debug - field_mappings value:', row.field_mappings, 'type:', typeof row.field_mappings);
             // If it's already an object/array, return it directly
             if (typeof row.field_mappings === 'object' && row.field_mappings !== null) {
               return row.field_mappings;

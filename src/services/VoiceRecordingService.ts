@@ -83,6 +83,7 @@ export class VoiceRecordingService {
     if (!this.audioStream) {
       const initialized = await this.initialize();
       if (!initialized) {
+        console.error('Failed to initialize audio stream');
         return false;
       }
     }
@@ -169,13 +170,15 @@ export class VoiceRecordingService {
       const sttResult = await AIProviderService.speechToText(audioBlob);
       
       if (sttResult.success && sttResult.data) {
+        console.log('🎯 Transcribed:', sttResult.data.text);
         this.onTranscriptionResult?.(sttResult.data);
         return sttResult.data;
       } else {
+        console.error('Speech-to-text failed:', sttResult.error);
         throw new Error(sttResult.error || 'STT processing failed');
       }
     } catch (error) {
-      console.error('Failed to process recording:', error);
+      console.error('Failed to process voice recording:', error);
       this.onRecordingError?.(error as Error);
       return null;
     }

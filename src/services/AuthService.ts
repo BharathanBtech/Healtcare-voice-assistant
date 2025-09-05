@@ -25,11 +25,6 @@ export class AuthService {
         const user = response.data.user;
         const sessionToken = response.data.token;
         
-        console.log('🔍 Login Debug - received token:', sessionToken);
-        console.log('🔍 Login Debug - token type:', typeof sessionToken);
-        console.log('🔍 Login Debug - token length:', sessionToken.length);
-        console.log('🔍 Login Debug - token parts:', sessionToken.split('.').length);
-        
         // Store session data
         const sessionData = {
           token: sessionToken,
@@ -37,11 +32,8 @@ export class AuthService {
           userId: user.id
         };
 
-        console.log('🔍 Login Debug - sessionData to encrypt:', sessionData);
-
         // Encrypt and store session
         const encryptedSession = EncryptionService.encrypt(JSON.stringify(sessionData));
-        console.log('🔍 Login Debug - encrypted session length:', encryptedSession.length);
         
         StorageService.setSecureItem(this.TOKEN_KEY, encryptedSession);
         
@@ -152,27 +144,15 @@ export class AuthService {
   static getSessionToken(): string | null {
     try {
       const encryptedSession = StorageService.getSecureItem(this.TOKEN_KEY);
-      console.log('🔍 AuthService Debug - encryptedSession exists:', !!encryptedSession);
-      
       if (!encryptedSession) {
-        console.log('❌ No encrypted session found');
         return null;
       }
 
       const decryptedSession = EncryptionService.decrypt(encryptedSession);
-      console.log('🔍 AuthService Debug - decryptedSession:', decryptedSession);
-      
       const sessionData = JSON.parse(decryptedSession);
-      console.log('🔍 AuthService Debug - sessionData:', sessionData);
-      
-      const token = sessionData.token;
-      console.log('🔍 AuthService Debug - extracted token:', token);
-      console.log('🔍 AuthService Debug - token type:', typeof token);
-      console.log('🔍 AuthService Debug - token length:', token ? token.length : 'null');
-      
-      return token;
+      return sessionData.token;
     } catch (error) {
-      console.error('❌ Error getting session token:', error);
+      console.error('Error getting session token:', error);
       return null;
     }
   }

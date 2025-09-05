@@ -278,7 +278,7 @@ const ToolCreator: React.FC = () => {
   const templates = ToolService.getToolTemplates();
 
   const handleTemplateSelect = (templateId: string | null) => {
-    console.log('🔍 Template selected:', templateId);
+    // console.log('🔍 Template selected:', templateId);
     setSelectedTemplate(templateId);
     
     if (templateId === 'custom') {
@@ -387,15 +387,15 @@ const ToolCreator: React.FC = () => {
     switch (currentStep) {
       case 1:
         isValid = selectedTemplate !== null;
-        console.log('🔍 Step 1 validation - selectedTemplate:', selectedTemplate, 'isValid:', isValid);
+        // console.log('🔍 Step 1 validation - selectedTemplate:', selectedTemplate, 'isValid:', isValid);
         return isValid;
       case 2:
         isValid = !!(tool.name && tool.description && tool.initialPrompt && tool.conclusionPrompt);
-        console.log('🔍 Step 2 validation - isValid:', isValid);
+       //  console.log('🔍 Step 2 validation - isValid:', isValid);
         return isValid;
       case 3:
         isValid = (tool.fields?.length || 0) > 0;
-        console.log('🔍 Step 3 validation - fields length:', tool.fields?.length, 'isValid:', isValid);
+        // console.log('🔍 Step 3 validation - fields length:', tool.fields?.length, 'isValid:', isValid);
         return isValid;
       case 4:
         if (tool.dataHandoff?.type === 'api') {
@@ -405,7 +405,7 @@ const ToolCreator: React.FC = () => {
         } else {
           isValid = true;
         }
-        console.log('🔍 Step 4 validation - isValid:', isValid);
+        // console.log('🔍 Step 4 validation - isValid:', isValid);
         return isValid;
       default:
         return true;
@@ -413,12 +413,12 @@ const ToolCreator: React.FC = () => {
   };
 
   const nextStep = () => {
-    console.log('🔍 Next button clicked - currentStep:', currentStep, 'validateCurrentStep():', validateCurrentStep());
+    // console.log('🔍 Next button clicked - currentStep:', currentStep, 'validateCurrentStep():', validateCurrentStep());
     if (validateCurrentStep() && currentStep < 4) {
-      console.log('🔍 Moving to next step:', currentStep + 1);
+      // console.log('🔍 Moving to next step:', currentStep + 1);
       setCurrentStep(currentStep + 1);
     } else {
-      console.log('🔍 Cannot move to next step - validation failed or at last step');
+      // console.log('🔍 Cannot move to next step - validation failed or at last step');
     }
   };
 

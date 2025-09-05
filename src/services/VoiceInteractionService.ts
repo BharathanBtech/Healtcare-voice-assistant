@@ -427,10 +427,19 @@ export class VoiceInteractionService {
   }
 
   public startListening(): void {
-    if (!this.voiceRecorder || this.isListening) return;
+    if (!this.voiceRecorder || this.isListening) {
+      console.warn('Cannot start listening - voiceRecorder missing or already listening');
+      return;
+    }
     
-    this.voiceRecorder.startRecording().catch(error => {
-      console.error('Failed to start recording:', error);
+    this.voiceRecorder.startRecording().then(success => {
+      if (success) {
+        console.log('🎤 Voice recording started');
+        this.isListening = true;
+        this.onStateChangeCallback?.('listening');
+      }
+    }).catch(error => {
+      console.error('Failed to start voice recording:', error);
       this.onStateChangeCallback?.('error');
     });
   }
