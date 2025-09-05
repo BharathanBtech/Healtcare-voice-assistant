@@ -1,0 +1,296 @@
+.data-handoff-test-panel {
+  background: white;
+  border: 1px solid #e1e5e9;
+  border-radius: 8px;
+  padding: 24px;
+  margin: 16px 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.panel-header {
+  margin-bottom: 24px;
+}
+
+.panel-header h3 {
+  margin: 0 0 8px 0;
+  color: #1a365d;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.panel-header p {
+  margin: 0;
+  color: #718096;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.handoff-info {
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.handoff-info.no-config {
+  background: #fef5e7;
+  border-color: #f6ad55;
+  color: #744210;
+}
+
+.handoff-info h4 {
+  margin: 0 0 16px 0;
+  color: #2d3748;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.config-detail {
+  margin: 8px 0;
+  font-size: 0.95rem;
+}
+
+.config-detail strong {
+  color: #4a5568;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.config-details {
+  margin-left: 16px;
+}
+
+.test-options {
+  margin-bottom: 24px;
+}
+
+.test-options h4 {
+  margin: 0 0 16px 0;
+  color: #2d3748;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.option-toggle {
+  margin: 12px 0;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  font-size: 0.95rem;
+  color: #4a5568;
+  cursor: pointer;
+}
+
+.toggle-label input[type="radio"] {
+  margin-right: 8px;
+  margin-top: 0;
+}
+
+.test-data-auto {
+  background: #edf2f7;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.test-data-info {
+  margin: 0;
+  color: #4a5568;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.test-data-custom {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.test-data-custom h4 {
+  margin: 0 0 16px 0;
+  color: #2d3748;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.test-field-input {
+  margin: 16px 0;
+}
+
+.test-field-input label {
+  display: block;
+  margin-bottom: 6px;
+  color: #4a5568;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.test-field-input input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.test-field-input input:focus {
+  outline: none;
+  border-color: #3182ce;
+  box-shadow: 0 0 0 3px rgba(49, 130, 206, 0.1);
+}
+
+.data-actions {
+  margin: 16px 0;
+  text-align: right;
+}
+
+.test-actions {
+  margin: 24px 0;
+  text-align: center;
+}
+
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  background-color: #3182ce;
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: #2b77cb;
+}
+
+.btn-secondary {
+  background-color: #e2e8f0;
+  color: #4a5568;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #cbd5e0;
+}
+
+.test-result {
+  border-radius: 6px;
+  padding: 20px;
+  margin-top: 24px;
+  border: 1px solid;
+}
+
+.test-result.success {
+  background: #f0fff4;
+  border-color: #68d391;
+  color: #22543d;
+}
+
+.test-result.error {
+  background: #fed7d7;
+  border-color: #fc8181;
+  color: #822727;
+}
+
+.test-result h4 {
+  margin: 0 0 16px 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.result-status {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.result-icon {
+  font-size: 1.2rem;
+  margin-right: 8px;
+}
+
+.result-message {
+  font-weight: 500;
+  font-size: 1rem;
+}
+
+.result-detail {
+  margin: 12px 0;
+  font-size: 0.9rem;
+}
+
+.result-detail strong {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.result-data {
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  padding: 12px;
+  margin-top: 8px;
+  font-size: 0.8rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.result-errors {
+  margin: 12px 0;
+}
+
+.result-errors ul {
+  margin: 8px 0 0 0;
+  padding-left: 20px;
+}
+
+.result-errors li {
+  margin: 4px 0;
+  font-size: 0.9rem;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .data-handoff-test-panel {
+    padding: 16px;
+    margin: 8px 0;
+  }
+  
+  .panel-header h3 {
+    font-size: 1.3rem;
+  }
+  
+  .test-field-input input {
+    font-size: 16px; /* Prevents zoom on iOS */
+  }
+  
+  .data-actions {
+    text-align: center;
+  }
+}

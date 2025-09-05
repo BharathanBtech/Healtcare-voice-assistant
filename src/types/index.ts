@@ -138,13 +138,14 @@ export interface VoiceSession {
   currentField: ToolField | null;
   collectedData: Record<string, any>;
   fieldStatuses: Record<string, 'pending' | 'completed' | 'error'>;
+  transcript: TranscriptEntry[];
   config: any;
 }
 
 export interface TranscriptEntry {
-  id: string;
+  id?: string;
   timestamp: Date;
-  type: 'user' | 'agent';
+  speaker: 'user' | 'system';
   text: string;
   confidence?: number;
 }

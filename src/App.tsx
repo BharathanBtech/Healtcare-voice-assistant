@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { User, ProviderConfig, Tool, AppSettings } from '@/types';
 import { AuthService } from '@/services/AuthService';
 import { StorageService } from '@/services/StorageService';
+import { ToolService } from '@/services/ToolService';
 
 // Components
 import LoginScreen from '@/components/auth/LoginScreen';
@@ -81,9 +82,20 @@ const App: React.FC = () => {
           setProviderConfig(config);
         }
 
-        // Load tools
-        const storedTools = StorageService.getTools();
-        setTools(storedTools);
+        // Load tools from API if authenticated, otherwise from storage
+        if (storedUser && AuthService.isValidSession()) {
+          try {
+            const apiTools = await ToolService.loadAllTools();
+            setTools(apiTools);
+          } catch (error) {
+            console.warn('Failed to load tools from API, using local storage:', error);
+            const storedTools = StorageService.getTools();
+            setTools(storedTools);
+          }
+        } else {
+          const storedTools = StorageService.getTools();
+          setTools(storedTools);
+        }
 
         // Load settings
         const storedSettings = StorageService.getSettings();

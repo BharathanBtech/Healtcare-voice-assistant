@@ -2,6 +2,7 @@ import axios from 'axios';
 import { ProviderConfig, STTProvider, LLMProvider, TTSProvider, ApiResponse } from '@/types';
 import { StorageService } from './StorageService';
 import { EncryptionService } from './EncryptionService';
+import { apiClient } from '@/config/api';
 
 export interface ProviderDefinition {
   id: string;
@@ -590,20 +591,50 @@ export class ProviderService {
         return { success: false, error: 'Invalid TTS provider configuration' };
       }
 
-      // Save to storage
-      StorageService.saveProviderConfig(config);
+      // Save to backend API
+      const response = await apiClient.post('/api/providers', config);
 
-      return { success: true, data: config, message: 'Provider configuration saved successfully' };
-    } catch (error) {
+      if (response.data.success) {
+        // Also save to local storage as cache
+        StorageService.saveProviderConfig(config);
+        return { success: true, data: config, message: 'Provider configuration saved successfully' };
+      } else {
+        return { success: false, error: response.data.error || 'Failed to save provider configuration' };
+      }
+    } catch (error: any) {
       console.error('Error saving provider configuration:', error);
-      return { success: false, error: 'Failed to save provider configuration' };
+      
+      if (error.response?.status === 400) {
+        return { success: false, error: error.response.data?.error || 'Invalid configuration data' };
+      } else if (error.response?.status === 500) {
+        return { success: false, error: 'Server error while saving configuration' };
+      } else if (error.code === 'ECONNABORTED') {
+        return { success: false, error: 'Request timeout - please try again' };
+      } else {
+        return { success: false, error: 'Failed to save provider configuration' };
+      }
     }
   }
 
   /**
    * Load provider configuration
    */
-  static loadProviderConfig(): ProviderConfig | null {
+  static async loadProviderConfig(): Promise<ProviderConfig | null> {
+    try {
+      // Try to load from backend API first
+      const response = await apiClient.get('/api/providers');
+      
+      if (response.data.success && response.data.data) {
+        const config = response.data.data;
+        // Update local storage cache
+        StorageService.saveProviderConfig(config);
+        return config;
+      }
+    } catch (error) {
+      console.warn('Failed to load provider config from API, falling back to local storage:', error);
+    }
+    
+    // Fallback to local storage
     return StorageService.getProviderConfig();
   }
 

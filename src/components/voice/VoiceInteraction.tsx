@@ -56,7 +56,7 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
   const loadTool = async () => {
     try {
       setIsLoading(true);
-      const loadedTool = ToolService.loadTool(toolId!);
+      const loadedTool = await ToolService.loadTool(toolId!);
       if (!loadedTool) {
         toast.error('Tool not found');
         navigate('/dashboard');

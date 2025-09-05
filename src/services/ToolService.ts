@@ -1,6 +1,7 @@
 import { Tool, ToolField, IntermediatePrompt, DataHandoffConfig, ApiResponse } from '@/types';
 import { StorageService } from './StorageService';
 import { EncryptionService } from './EncryptionService';
+import { apiClient } from '@/config/api';
 import { v4 as uuidv4 } from 'uuid';
 import { validateField, ValidationRule, HealthcareValidationRules } from '@/validations';
 
@@ -413,35 +414,102 @@ export class ToolService {
       // Update the updatedAt timestamp
       tool.updatedAt = new Date();
 
-      // Save to storage
-      StorageService.saveTool(tool);
+      // Determine if this is create or update based on existing tool
+      const isUpdate = tool.id && (await this.loadTool(tool.id)) !== null;
+      
+      let response;
+      if (isUpdate) {
+        // Update existing tool
+        response = await apiClient.put(`/api/tools/${tool.id}`, tool);
+      } else {
+        // Create new tool
+        if (!tool.id) {
+          tool.id = EncryptionService.generateSecureUUID();
+        }
+        response = await apiClient.post('/api/tools', tool);
+      }
 
-      return {
-        success: true,
-        data: tool,
-        message: 'Tool saved successfully'
-      };
-    } catch (error) {
+      if (response.data.success) {
+        // Also cache locally
+        StorageService.saveTool(response.data.data);
+        
+        return {
+          success: true,
+          data: response.data.data,
+          message: isUpdate ? 'Tool updated successfully' : 'Tool created successfully'
+        };
+      } else {
+        return {
+          success: false,
+          error: response.data.error || 'Failed to save tool'
+        };
+      }
+    } catch (error: any) {
       console.error('Error saving tool:', error);
-      return {
-        success: false,
-        error: 'Failed to save tool'
-      };
+      
+      if (error.response?.status === 400) {
+        return {
+          success: false,
+          error: error.response.data?.error || 'Invalid tool data'
+        };
+      } else if (error.response?.status === 401) {
+        return {
+          success: false,
+          error: 'Authentication required'
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Failed to save tool. Please try again.'
+        };
+      }
     }
   }
 
   /**
    * Load a tool by ID
    */
-  static loadTool(toolId: string): Tool | null {
-    return StorageService.getTool(toolId);
+  static async loadTool(toolId: string): Promise<Tool | null> {
+    try {
+      const response = await apiClient.get(`/api/tools/${toolId}`);
+      
+      if (response.data.success && response.data.data) {
+        const tool = response.data.data;
+        // Cache locally
+        StorageService.saveTool(tool);
+        return tool;
+      }
+      
+      return null;
+    } catch (error: any) {
+      console.warn(`Failed to load tool ${toolId} from API, trying local storage:`, error);
+      
+      // Fallback to local storage
+      return StorageService.getTool(toolId);
+    }
   }
 
   /**
    * Load all tools
    */
-  static loadAllTools(): Tool[] {
-    return StorageService.getTools();
+  static async loadAllTools(): Promise<Tool[]> {
+    try {
+      const response = await apiClient.get('/api/tools');
+      
+      if (response.data.success && response.data.data) {
+        const tools = response.data.data;
+        // Cache all tools locally
+        StorageService.saveTools(tools);
+        return tools;
+      }
+      
+      return [];
+    } catch (error: any) {
+      console.warn('Failed to load tools from API, trying local storage:', error);
+      
+      // Fallback to local storage
+      return StorageService.getTools();
+    }
   }
 
   /**
@@ -449,26 +517,50 @@ export class ToolService {
    */
   static async deleteTool(toolId: string): Promise<ApiResponse<boolean>> {
     try {
-      StorageService.deleteTool(toolId);
-      return {
-        success: true,
-        data: true,
-        message: 'Tool deleted successfully'
-      };
-    } catch (error) {
+      const response = await apiClient.delete(`/api/tools/${toolId}`);
+      
+      if (response.data.success) {
+        // Also remove from local storage
+        StorageService.deleteTool(toolId);
+        
+        return {
+          success: true,
+          data: true,
+          message: 'Tool deleted successfully'
+        };
+      } else {
+        return {
+          success: false,
+          error: response.data.error || 'Failed to delete tool'
+        };
+      }
+    } catch (error: any) {
       console.error('Error deleting tool:', error);
-      return {
-        success: false,
-        error: 'Failed to delete tool'
-      };
+      
+      if (error.response?.status === 404) {
+        return {
+          success: false,
+          error: 'Tool not found'
+        };
+      } else if (error.response?.status === 401) {
+        return {
+          success: false,
+          error: 'Authentication required'
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Failed to delete tool. Please try again.'
+        };
+      }
     }
   }
 
   /**
    * Duplicate a tool
    */
-  static duplicateTool(toolId: string, newName?: string): Tool | null {
-    const originalTool = this.loadTool(toolId);
+  static async duplicateTool(toolId: string, newName?: string): Promise<Tool | null> {
+    const originalTool = await this.loadTool(toolId);
     if (!originalTool) {
       return null;
     }
@@ -497,8 +589,8 @@ export class ToolService {
   /**
    * Export tool configuration
    */
-  static exportTool(toolId: string): string | null {
-    const tool = this.loadTool(toolId);
+  static async exportTool(toolId: string): Promise<string | null> {
+    const tool = await this.loadTool(toolId);
     if (!tool) {
       return null;
     }

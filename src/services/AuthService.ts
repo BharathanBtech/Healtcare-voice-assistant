@@ -2,6 +2,7 @@ import axios from 'axios';
 import { User, LoginCredentials, ApiResponse } from '@/types';
 import { StorageService } from './StorageService';
 import { EncryptionService } from './EncryptionService';
+import { apiClient } from '@/config/api';
 
 export class AuthService {
   private static readonly TOKEN_KEY = 'hva_auth_token';
@@ -12,24 +13,19 @@ export class AuthService {
    */
   static async login(credentials: LoginCredentials): Promise<ApiResponse<User>> {
     try {
-      // For demo purposes, we'll simulate authentication
-      // In production, this would make an API call to your authentication server
-      
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock authentication logic
-      if (credentials.username === 'demo' && credentials.password === 'demo123') {
-        const user: User = {
-          id: '1',
-          username: credentials.username,
-          email: 'demo@healthcare.com',
-          role: 'admin',
-          organizationId: 'org_1'
-        };
+      // Make API call to backend authentication endpoint
+      const response = await axios.post('http://localhost:3001/api/auth/login', {
+        username: credentials.username,
+        password: credentials.password
+      }, {
+        timeout: 10000
+      });
 
-        // Generate and store session token
-        const sessionToken = EncryptionService.generateSessionToken();
+      if (response.data.success && response.data.user && response.data.token) {
+        const user = response.data.user;
+        const sessionToken = response.data.token;
+        
+        // Store session data
         const sessionData = {
           token: sessionToken,
           timestamp: Date.now(),
@@ -51,15 +47,33 @@ export class AuthService {
       } else {
         return {
           success: false,
-          error: 'Invalid username or password'
+          error: response.data.error || 'Authentication failed'
         };
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login error:', error);
-      return {
-        success: false,
-        error: 'Authentication failed. Please try again.'
-      };
+      
+      if (error.response?.status === 401) {
+        return {
+          success: false,
+          error: 'Invalid username or password'
+        };
+      } else if (error.response?.status === 400) {
+        return {
+          success: false,
+          error: error.response.data?.error || 'Invalid login data'
+        };
+      } else if (error.code === 'ECONNABORTED') {
+        return {
+          success: false,
+          error: 'Connection timeout. Please try again.'
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Authentication failed. Please check your connection and try again.'
+        };
+      }
     }
   }
 
@@ -68,12 +82,25 @@ export class AuthService {
    */
   static async logout(): Promise<void> {
     try {
+      // Try to invalidate session on server
+      const sessionToken = this.getSessionToken();
+      if (sessionToken) {
+        try {
+          await axios.post('http://localhost:3001/api/auth/logout', {}, {
+            headers: {
+              'Authorization': `Bearer ${sessionToken}`
+            },
+            timeout: 5000
+          });
+        } catch (error) {
+          console.warn('Failed to logout on server:', error);
+          // Continue with local cleanup even if server logout fails
+        }
+      }
+      
       // Clear stored session and user data
       StorageService.removeSecureItem(this.TOKEN_KEY);
       StorageService.clearUser();
-      
-      // In production, you might also want to invalidate the token on the server
-      // await axios.post('/api/auth/logout');
       
     } catch (error) {
       console.error('Logout error:', error);
@@ -159,36 +186,11 @@ export class AuthService {
 
   /**
    * Setup axios interceptors for authentication
+   * @deprecated Use the apiClient from @/config/api instead for API calls to our backend
    */
   static setupAxiosInterceptors(): void {
-    // Request interceptor to add auth token
-    axios.interceptors.request.use(
-      (config) => {
-        const token = this.getSessionToken();
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
-        return config;
-      },
-      (error) => {
-        return Promise.reject(error);
-      }
-    );
-
-    // Response interceptor to handle auth errors
-    axios.interceptors.response.use(
-      (response) => {
-        return response;
-      },
-      (error) => {
-        if (error.response?.status === 401) {
-          // Unauthorized, logout user
-          this.logout();
-          window.location.href = '/login';
-        }
-        return Promise.reject(error);
-      }
-    );
+    // This method is deprecated - interceptors are now setup in @/config/api
+    console.warn('AuthService.setupAxiosInterceptors() is deprecated. Use apiClient from @/config/api instead.');
   }
 
   /**

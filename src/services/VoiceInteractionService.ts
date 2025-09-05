@@ -1,7 +1,10 @@
 import { Tool, ToolField, VoiceSession, FieldValidationResult, VoiceInteractionState } from '@/types';
 import { ProviderService } from './ProviderService';
 import { validateField } from '@/validations';
-import { DataHandoffService } from './DataHandoffService';
+import { RealTimeDataHandoffService, DataHandoffResult } from './RealTimeDataHandoffService';
+import { VoiceSessionService } from './VoiceSessionService';
+import { AIProviderService, STTResult, LLMResponse, TTSResult } from './AIProviderService';
+import { VoiceRecordingService, RecordingResult } from './VoiceRecordingService';
 
 export interface TranscriptionResult {
   text: string;
@@ -35,16 +38,16 @@ export interface SessionProgress {
 
 export class VoiceInteractionService {
   private static instance: VoiceInteractionService;
-  private recognition: any = null;
-  private synthesis: SpeechSynthesis | null = null;
+  private voiceRecorder: VoiceRecordingService | null = null;
   private isListening = false;
   private currentSession: VoiceSession | null = null;
   private onTranscriptionCallback?: (result: TranscriptionResult) => void;
   private onStateChangeCallback?: (state: VoiceInteractionState) => void;
   private sessionProgress: SessionProgress | null = null;
+  private currentAudio: HTMLAudioElement | null = null;
 
   private constructor() {
-    this.initializeSpeechServices();
+    this.initializeAIServices();
   }
 
   public static getInstance(): VoiceInteractionService {
@@ -54,78 +57,54 @@ export class VoiceInteractionService {
     return VoiceInteractionService.instance;
   }
 
-  private async initializeSpeechServices(): Promise<void> {
+  private async initializeAIServices(): Promise<void> {
     try {
-      // Initialize Speech Recognition
-      if ('webkitSpeechRecognition' in window) {
-        this.recognition = new (window as any).webkitSpeechRecognition();
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
-        this.recognition.lang = 'en-US';
-        this.setupRecognitionEvents();
-      } else if ('SpeechRecognition' in window) {
-        this.recognition = new (window as any).SpeechRecognition();
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
-        this.recognition.lang = 'en-US';
-        this.setupRecognitionEvents();
-      }
-
-      // Initialize Speech Synthesis
-      if ('speechSynthesis' in window) {
-        this.synthesis = window.speechSynthesis;
-      }
+      // Initialize AI Provider Service
+      await AIProviderService.initialize();
+      
+      // Initialize Voice Recording Service
+      this.voiceRecorder = new VoiceRecordingService({
+        maxDuration: 30000, // 30 seconds max
+        silenceThreshold: 0.01,
+        silenceDuration: 2000 // 2 seconds of silence
+      });
+      
+      this.setupRecordingEvents();
     } catch (error) {
-      console.error('Failed to initialize speech services:', error);
+      console.error('Failed to initialize AI services:', error);
     }
   }
 
-  private setupRecognitionEvents(): void {
-    if (!this.recognition) return;
+  private setupRecordingEvents(): void {
+    if (!this.voiceRecorder) return;
 
-    this.recognition.onstart = () => {
-      this.isListening = true;
-      this.onStateChangeCallback?.('listening');
-    };
-
-    this.recognition.onend = () => {
-      this.isListening = false;
-      this.onStateChangeCallback?.('idle');
-    };
-
-    this.recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error);
-      this.isListening = false;
-      this.onStateChangeCallback?.('error');
-    };
-
-    this.recognition.onresult = (event: any) => {
-      let finalTranscript = '';
-      let interimTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-
-      if (finalTranscript) {
+    this.voiceRecorder.setEventHandlers({
+      onRecordingStart: () => {
+        this.isListening = true;
+        this.onStateChangeCallback?.('listening');
+      },
+      
+      onRecordingStop: (result: RecordingResult) => {
+        this.isListening = false;
+        this.onStateChangeCallback?.('processing');
+        console.log(`Recording completed: ${result.duration}ms`);
+      },
+      
+      onRecordingError: (error: Error) => {
+        console.error('Recording error:', error);
+        this.isListening = false;
+        this.onStateChangeCallback?.('error');
+      },
+      
+      onTranscriptionResult: (result: STTResult) => {
         this.onTranscriptionCallback?.({
-          text: finalTranscript,
-          confidence: event.results[event.resultIndex][0].confidence || 0.9,
+          text: result.text,
+          confidence: result.confidence,
           isFinal: true
         });
-      } else if (interimTranscript) {
-        this.onTranscriptionCallback?.({
-          text: interimTranscript,
-          confidence: 0,
-          isFinal: false
-        });
+        this.onStateChangeCallback?.('idle');
       }
-    };
+    });
   }
 
   public async startSession(tool: Tool, config: VoiceInteractionConfig): Promise<VoiceSession> {
@@ -133,24 +112,42 @@ export class VoiceInteractionService {
       throw new Error('A voice session is already active');
     }
 
-    const session: VoiceSession = {
-      id: this.generateSessionId(),
-      toolId: tool.id,
-      startTime: new Date(),
-      state: 'initializing',
-      currentField: null,
-      collectedData: {},
-      fieldStatuses: {},
-      config
-    };
+    const sessionId = VoiceSessionService.generateSessionId();
+    
+    // Create session in database
+    const dbSessionResult = await VoiceSessionService.createVoiceSession({
+      tool_id: tool.id,
+      session_state: 'initializing',
+      collected_data: {},
+      field_statuses: {},
+      transcript: [],
+      start_time: new Date()
+    });
 
+    if (!dbSessionResult.success || !dbSessionResult.data) {
+      throw new Error(`Failed to create voice session: ${dbSessionResult.error}`);
+    }
+
+    const session = dbSessionResult.data;
     this.currentSession = session;
     this.initializeSessionProgress(tool);
 
+    // Add initial prompt to transcript
+    const initialPrompt = tool.initialPrompt || `Let's start collecting information for ${tool.name}.`;
+    await VoiceSessionService.addTranscriptEntry(session.id, {
+      speaker: 'system',
+      text: initialPrompt
+    });
+
     // Start with the initial prompt
-    await this.speak(tool.initialPrompt || `Let's start collecting information for ${tool.name}.`);
+    await this.speak(initialPrompt);
     
+    // Update session state to active
     session.state = 'active';
+    await VoiceSessionService.updateVoiceSession(session.id, {
+      session_state: 'active'
+    });
+    
     this.onStateChangeCallback?.('active');
 
     return session;
@@ -241,12 +238,29 @@ export class VoiceInteractionService {
       this.sessionProgress.fieldStatuses.set(currentField.id, 'completed');
       this.currentSession.collectedData[currentField.name] = validation.value;
       
+      // Add user input to transcript
+      await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
+        speaker: 'user',
+        text: input,
+        confidence: 0.9 // Default confidence
+      });
+      
       // Confirm the input
-      await this.speak(`Got it, ${currentField.name}: ${validation.value}`);
+      const confirmationText = `Got it, ${currentField.name}: ${validation.value}`;
+      await this.speak(confirmationText);
+      
+      // Add confirmation to transcript
+      await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
+        speaker: 'system',
+        text: confirmationText
+      });
       
       // Move to next field
       this.sessionProgress.completedFields++;
       this.sessionProgress.currentFieldIndex++;
+      
+      // Save progress to database
+      await this.saveSessionProgress();
       
       await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause
       await this.processNextField();
@@ -271,10 +285,32 @@ export class VoiceInteractionService {
     
     try {
       const { ToolService } = await import('./ToolService');
-      return ToolService.loadTool(this.currentSession.toolId);
+      return await ToolService.loadTool(this.currentSession.toolId);
     } catch (error) {
       console.error('Failed to get current tool:', error);
       return null;
+    }
+  }
+
+  private async saveSessionProgress(): Promise<void> {
+    if (!this.currentSession || !this.sessionProgress) return;
+    
+    try {
+      // Convert Maps to objects for database storage
+      const collectedData = Object.fromEntries(this.sessionProgress.collectedData);
+      const fieldStatuses: Record<string, 'pending' | 'completed' | 'error'> = {};
+      
+      this.sessionProgress.fieldStatuses.forEach((status, fieldId) => {
+        fieldStatuses[fieldId] = status;
+      });
+      
+      await VoiceSessionService.saveSessionProgress(
+        this.currentSession.id,
+        collectedData,
+        fieldStatuses
+      );
+    } catch (error) {
+      console.error('Failed to save session progress:', error);
     }
   }
 
@@ -288,24 +324,72 @@ export class VoiceInteractionService {
     const conclusionPrompt = tool.conclusionPrompt || 
                            'Thank you! I have collected all the required information.';
     await this.speak(conclusionPrompt);
+    
+    // Add conclusion to transcript
+    await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
+      speaker: 'system',
+      text: conclusionPrompt
+    });
 
     // Submit data if configured
     if (tool.dataHandoff) {
       try {
         this.onStateChangeCallback?.('processing');
-        await this.speak('Processing your information...');
+        const processingMessage = 'Processing your information...';
+        await this.speak(processingMessage);
         
+        await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
+          speaker: 'system',
+          text: processingMessage
+        });
+        
+        // Prepare data for handoff (add session metadata)
         const dataToSubmit = Object.fromEntries(this.sessionProgress.collectedData);
-        await DataHandoffService.submitData(tool.dataHandoff, dataToSubmit);
+        dataToSubmit._sessionId = this.currentSession.id;
+        dataToSubmit._toolId = tool.id;
+        dataToSubmit._timestamp = new Date().toISOString();
         
-        await this.speak('Your information has been successfully submitted.');
+        // Execute handoff using the new service
+        const handoffResult: DataHandoffResult = await RealTimeDataHandoffService.executeHandoff(
+          this.currentSession,
+          tool,
+          dataToSubmit
+        );
+        
+        if (handoffResult.success) {
+          const successMessage = handoffResult.submissionId 
+            ? `Your information has been successfully submitted. Reference ID: ${handoffResult.submissionId}.`
+            : 'Your information has been successfully submitted.';
+          await this.speak(successMessage);
+          await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
+            speaker: 'system',
+            text: successMessage
+          });
+        } else {
+          throw new Error(handoffResult.message || 'Data handoff failed');
+        }
       } catch (error) {
         console.error('Data submission failed:', error);
-        await this.speak('There was an issue submitting your information. Please contact support.');
+        const errorMessage = 'There was an issue submitting your information. Please contact support.';
+        await this.speak(errorMessage);
+        await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
+          speaker: 'system',
+          text: errorMessage
+        });
       }
     }
 
-    // Complete the session
+    // Complete the session in database
+    const finalData = Object.fromEntries(this.sessionProgress.collectedData);
+    const transcript = this.currentSession.transcript || [];
+    
+    await VoiceSessionService.completeVoiceSession(
+      this.currentSession.id,
+      finalData,
+      transcript
+    );
+
+    // Update local session state
     this.currentSession.endTime = new Date();
     this.currentSession.state = 'completed';
     this.onStateChangeCallback?.('completed');
@@ -316,7 +400,19 @@ export class VoiceInteractionService {
   public async cancelSession(): Promise<void> {
     if (!this.currentSession) return;
 
-    await this.speak('Session cancelled.');
+    const cancelMessage = 'Session cancelled.';
+    await this.speak(cancelMessage);
+    
+    // Add cancellation to transcript
+    await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
+      speaker: 'system',
+      text: cancelMessage
+    });
+    
+    // Update session in database
+    await VoiceSessionService.cancelVoiceSession(this.currentSession.id);
+    
+    // Update local session state
     this.currentSession.state = 'cancelled';
     this.currentSession.endTime = new Date();
     this.onStateChangeCallback?.('cancelled');
@@ -331,50 +427,86 @@ export class VoiceInteractionService {
   }
 
   public startListening(): void {
-    if (!this.recognition || this.isListening) return;
+    if (!this.voiceRecorder || this.isListening) return;
     
-    try {
-      this.recognition.start();
-    } catch (error) {
-      console.error('Failed to start listening:', error);
-    }
+    this.voiceRecorder.startRecording().catch(error => {
+      console.error('Failed to start recording:', error);
+      this.onStateChangeCallback?.('error');
+    });
   }
 
   public stopListening(): void {
-    if (!this.recognition || !this.isListening) return;
+    if (!this.voiceRecorder || !this.isListening) return;
     
-    try {
-      this.recognition.stop();
-    } catch (error) {
-      console.error('Failed to stop listening:', error);
-    }
+    this.voiceRecorder.stopRecording();
   }
 
   public async speak(text: string, options?: SpeechSynthesisOptions): Promise<void> {
-    if (!this.synthesis) {
-      console.warn('Speech synthesis not available');
-      return;
-    }
-
-    return new Promise((resolve, reject) => {
-      const utterance = new SpeechSynthesisUtterance(text);
+    try {
+      this.onStateChangeCallback?.('speaking');
       
-      // Apply options
-      if (options) {
-        if (options.rate) utterance.rate = options.rate;
-        if (options.pitch) utterance.pitch = options.pitch;
-        if (options.volume) utterance.volume = options.volume;
+      // Use AI TTS provider if available
+      if (AIProviderService.areProvidersConfigured()) {
+        const ttsResult = await AIProviderService.textToSpeech(text);
+        
+        if (ttsResult.success && ttsResult.data) {
+          return new Promise((resolve, reject) => {
+            // Stop any current audio
+            if (this.currentAudio) {
+              this.currentAudio.pause();
+              this.currentAudio.src = '';
+            }
+            
+            // Create and play audio
+            this.currentAudio = new Audio(ttsResult.data!.audioUrl);
+            this.currentAudio.onended = () => {
+              this.onStateChangeCallback?.('idle');
+              resolve();
+            };
+            this.currentAudio.onerror = (error) => {
+              console.error('TTS audio playback error:', error);
+              this.onStateChangeCallback?.('error');
+              reject(error);
+            };
+            
+            this.currentAudio.play().catch(reject);
+          });
+        } else {
+          console.warn('TTS failed, falling back to browser synthesis:', ttsResult.error);
+        }
       }
+      
+      // Fallback to browser speech synthesis
+      if ('speechSynthesis' in window) {
+        return new Promise((resolve, reject) => {
+          const utterance = new SpeechSynthesisUtterance(text);
+          
+          // Apply options
+          if (options) {
+            if (options.rate) utterance.rate = options.rate;
+            if (options.pitch) utterance.pitch = options.pitch;
+            if (options.volume) utterance.volume = options.volume;
+          }
 
-      utterance.onend = () => resolve();
-      utterance.onerror = (error) => reject(error);
+          utterance.onend = () => {
+            this.onStateChangeCallback?.('idle');
+            resolve();
+          };
+          utterance.onerror = (error) => {
+            this.onStateChangeCallback?.('error');
+            reject(error);
+          };
 
-      if (this.synthesis) {
-        this.synthesis.speak(utterance);
+          window.speechSynthesis.speak(utterance);
+        });
       } else {
-        reject(new Error('Speech synthesis not available'));
+        console.warn('No TTS available');
+        this.onStateChangeCallback?.('idle');
       }
-    });
+    } catch (error) {
+      console.error('Speech synthesis error:', error);
+      this.onStateChangeCallback?.('error');
+    }
   }
 
   public getCurrentSession(): VoiceSession | null {
@@ -402,16 +534,22 @@ export class VoiceInteractionService {
   }
 
   public getSupportedVoices(): SpeechSynthesisVoice[] {
-    if (!this.synthesis) return [];
-    return this.synthesis.getVoices();
+    if (!('speechSynthesis' in window)) return [];
+    return window.speechSynthesis.getVoices();
   }
 
   public isSpeechRecognitionSupported(): boolean {
-    return this.recognition !== null;
+    // Check if either AI providers are configured or browser API is available
+    return AIProviderService.areProvidersConfigured() || VoiceRecordingService.isSupported();
   }
 
   public isSpeechSynthesisSupported(): boolean {
-    return this.synthesis !== null;
+    // Check if either AI providers are configured or browser API is available
+    return AIProviderService.areProvidersConfigured() || ('speechSynthesis' in window);
+  }
+
+  public areAIProvidersConfigured(): boolean {
+    return AIProviderService.areProvidersConfigured();
   }
 
   private validateFieldInput(field: ToolField, input: string): FieldValidationResult {

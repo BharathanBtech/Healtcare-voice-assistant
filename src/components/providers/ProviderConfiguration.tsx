@@ -229,6 +229,31 @@ const ProviderConfiguration: React.FC = () => {
   const [llmConfig, setLlmConfig] = useState(providerConfig?.llm.config || {});
   const [ttsConfig, setTtsConfig] = useState(providerConfig?.tts.config || {});
 
+  // Load provider configuration on component mount
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const config = await ProviderService.loadProviderConfig();
+        if (config) {
+          setProviderConfig(config);
+          setSttProvider(config.stt.type);
+          setLlmProvider(config.llm.type);
+          setTtsProvider(config.tts.type);
+          setSttCredentials(config.stt.credentials);
+          setLlmCredentials(config.llm.credentials);
+          setTtsCredentials(config.tts.credentials);
+          setSttConfig(config.stt.config);
+          setLlmConfig(config.llm.config);
+          setTtsConfig(config.tts.config);
+        }
+      } catch (error) {
+        console.error('Failed to load provider configuration:', error);
+      }
+    };
+    
+    loadConfig();
+  }, [setProviderConfig]);
+
   // Load default configurations when provider changes
   useEffect(() => {
     const defaultConfig = ProviderService.getDefaultConfig('stt', sttProvider);
