@@ -1,9 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { useApp } from '../../App';
+import { ToolService } from '@/services/ToolService';
+import { Tool } from '@/types';
 
 const Dashboard: React.FC = () => {
-  const { tools, settings } = useApp();
+  const { tools, setTools, settings } = useApp();
+  const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; tool: Tool | null }>({ show: false, tool: null });
+  const [deleting, setDeleting] = useState(false);
 
   const stats = {
     totalTools: tools.length,
@@ -13,6 +18,39 @@ const Dashboard: React.FC = () => {
   };
 
   const recentTools = tools.slice(0, 5);
+
+  const handleDeleteClick = (tool: Tool) => {
+    setDeleteConfirm({ show: true, tool });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm.tool) return;
+
+    setDeleting(true);
+    try {
+      const result = await ToolService.deleteTool(deleteConfirm.tool.id);
+      
+      if (result.success) {
+        // Remove from local tools list
+        const updatedTools = tools.filter(t => t.id !== deleteConfirm.tool!.id);
+        setTools(updatedTools);
+        
+        toast.success('Tool deleted successfully!');
+      } else {
+        toast.error(result.error || 'Failed to delete tool');
+      }
+    } catch (error) {
+      console.error('Error deleting tool:', error);
+      toast.error('Failed to delete tool');
+    } finally {
+      setDeleting(false);
+      setDeleteConfirm({ show: false, tool: null });
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirm({ show: false, tool: null });
+  };
 
   return (
     <div className="dashboard fade-in">
@@ -195,6 +233,15 @@ const Dashboard: React.FC = () => {
                       >
                         Edit
                       </Link>
+                      <button
+                        className="btn btn-danger btn-sm"
+                        onClick={() => handleDeleteClick(tool)}
+                        title="Delete Tool"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -203,6 +250,45 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4">
+              Delete Tool: {deleteConfirm.tool?.name}
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete this tool? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleDeleteCancel}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={handleDeleteConfirm}
+                disabled={deleting}
+              >
+                {deleting ? (
+                  <>
+                    <div className="loading-spinner w-4 h-4"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete Tool'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .stats-grid {
