@@ -124,7 +124,7 @@ const Layout: React.FC = () => {
       </aside>
 
       {/* Main Content */}
-      <div className="main-content">
+      <div className={`main-content ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         {/* Header */}
         <header className="header">
           <div className="header-left">
@@ -188,6 +188,10 @@ const Layout: React.FC = () => {
 
         .sidebar.collapsed {
           width: 80px;
+        }
+        
+        .main-content.sidebar-collapsed {
+          margin-left: 80px;
         }
 
         .sidebar-header {
@@ -328,19 +332,11 @@ const Layout: React.FC = () => {
 
         @media (max-width: 768px) {
           .sidebar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            height: 100vh;
             z-index: 1000;
-            transform: translateX(-100%);
           }
 
-          .sidebar:not(.collapsed) {
-            transform: translateX(0);
-          }
-
-          .main-content {
+          .main-content,
+          .main-content.sidebar-collapsed {
             margin-left: 0;
           }
 
