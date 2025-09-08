@@ -504,33 +504,41 @@ const ToolEditor: React.FC = () => {
       <form onSubmit={handleSubmit(onSubmit)}>
         {/* Header */}
         <div className="card mb-6">
-          <div className="card-header">
-            <div>
+          <div className="card-header tool-editor-header">
+            <div className="header-content">
               <h2 className="card-title">Edit Tool: {tool.name}</h2>
               <p className="text-sm text-gray-500">
                 Modify your voice interaction tool configuration
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="tool-editor-actions">
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn btn-secondary btn-cancel"
                 onClick={() => navigate('/dashboard')}
               >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
                 Cancel
               </button>
               <button
                 type="submit"
-                className="btn btn-primary"
+                className="btn btn-primary btn-save"
                 disabled={saving}
               >
                 {saving ? (
                   <>
-                    <div className="loading-spinner w-4 h-4"></div>
+                    <div className="loading-spinner w-4 h-4 mr-2"></div>
                     Saving...
                   </>
                 ) : (
-                  'Save Changes'
+                  <>
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Save Changes
+                  </>
                 )}
               </button>
             </div>
