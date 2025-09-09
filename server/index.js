@@ -13,22 +13,36 @@ const { EncryptionService } = require('./services/EncryptionService');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security middleware
-app.use(helmet({
+// Security middleware - Relaxed CSP for test routes
+app.use('/test', helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "http://localhost:3001", "ws://localhost:3000", "http://localhost:8080", "ws://localhost:8080"]
+    }
+  }
+}));
+
+// More restrictive security for API routes
+app.use('/api', helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "http://localhost:3001", "ws://localhost:3000"]
+      connectSrc: ["'self'", "http://localhost:3001", "ws://localhost:3000", "http://localhost:8080", "ws://localhost:8080"]
     }
   }
 }));
 
 // CORS configuration
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8080', 'http://127.0.0.1:8080'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -449,7 +463,21 @@ app.post('/api/voice-sessions', authenticateToken, async (req, res) => {
     res.status(201).json({ success: true, data: session });
   } catch (error) {
     console.error('Create voice session error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    
+    // Handle specific error cases
+    if (error.message.includes('Tool not found') || error.message.includes('Invalid tool_id')) {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+    
+    // Generic server error
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to create voice session',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
   }
 });
 
@@ -594,6 +622,39 @@ app.post('/api/settings/:key', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Set setting error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== TEST TOOLS ROUTES ====================
+
+// Serve test tools (for development)
+const path = require('path');
+const fs = require('fs');
+
+app.get('/test/voice-session', (req, res) => {
+  const testFilePath = path.join(__dirname, '..', 'test-voice-session.html');
+  if (fs.existsSync(testFilePath)) {
+    res.sendFile(testFilePath);
+  } else {
+    res.status(404).send('Test file not found');
+  }
+});
+
+app.get('/test/connection', (req, res) => {
+  const testFilePath = path.join(__dirname, '..', 'test-connection.html');
+  if (fs.existsSync(testFilePath)) {
+    res.sendFile(testFilePath);
+  } else {
+    res.status(404).send('Test file not found');
+  }
+});
+
+app.get('/test/debug-voice', (req, res) => {
+  const testFilePath = path.join(__dirname, '..', 'debug-voice-timeout.html');
+  if (fs.existsSync(testFilePath)) {
+    res.sendFile(testFilePath);
+  } else {
+    res.status(404).send('Test file not found');
   }
 });
 

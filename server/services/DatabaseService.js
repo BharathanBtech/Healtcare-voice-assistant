@@ -590,21 +590,41 @@ class DatabaseService {
 
   // Voice session methods
   async createVoiceSession(sessionData) {
-    const query = `
-      INSERT INTO voice_sessions (id, user_id, tool_id, session_state, collected_data, field_statuses)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING *;
-    `;
-    const values = [
-      sessionData.id || crypto.randomUUID(),
-      sessionData.user_id,
-      sessionData.tool_id,
-      sessionData.session_state || 'initializing',
-      JSON.stringify(sessionData.collected_data || {}),
-      JSON.stringify(sessionData.field_statuses || {})
-    ];
-    const result = await this.query(query, values);
-    return result.rows[0];
+    try {
+      // First verify that the tool exists and belongs to the user
+      const toolCheckQuery = `
+        SELECT id FROM tools 
+        WHERE id = $1 AND user_id = $2 AND is_active = true
+      `;
+      const toolResult = await this.query(toolCheckQuery, [sessionData.tool_id, sessionData.user_id]);
+      
+      if (toolResult.rows.length === 0) {
+        throw new Error(`Tool not found or access denied: ${sessionData.tool_id}`);
+      }
+      
+      // If tool exists, create the session
+      const query = `
+        INSERT INTO voice_sessions (id, user_id, tool_id, session_state, collected_data, field_statuses)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *;
+      `;
+      const values = [
+        sessionData.id || crypto.randomUUID(),
+        sessionData.user_id,
+        sessionData.tool_id,
+        sessionData.session_state || 'initializing',
+        JSON.stringify(sessionData.collected_data || {}),
+        JSON.stringify(sessionData.field_statuses || {})
+      ];
+      const result = await this.query(query, values);
+      return result.rows[0];
+    } catch (error) {
+      // Re-throw with more specific error message
+      if (error.code === '23503') { // Foreign key violation
+        throw new Error(`Invalid tool_id: Tool '${sessionData.tool_id}' does not exist`);
+      }
+      throw error;
+    }
   }
 
   async updateVoiceSession(sessionId, updateData) {

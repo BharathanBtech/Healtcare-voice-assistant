@@ -61,6 +61,7 @@ export interface IntermediatePrompt {
 export interface ToolField {
   id: string;
   name: string;
+  description?: string; // Optional field description
   required: boolean;
   type: 'text' | 'number' | 'email' | 'phone' | 'ssn' | 'date' | 'select';
   validation: FieldValidation;
@@ -148,6 +149,7 @@ export interface TranscriptEntry {
   speaker: 'user' | 'system';
   text: string;
   confidence?: number;
+  metadata?: Record<string, any>; // Optional metadata field
 }
 
 export interface FieldValidationResult {

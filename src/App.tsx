@@ -82,20 +82,8 @@ const App: React.FC = () => {
           setProviderConfig(config);
         }
 
-        // Load tools from API if authenticated, otherwise from storage
-        if (storedUser && AuthService.isValidSession()) {
-          try {
-            const apiTools = await ToolService.loadAllTools();
-            setTools(apiTools);
-          } catch (error) {
-            console.warn('Failed to load tools from API, using local storage:', error);
-            const storedTools = StorageService.getTools();
-            setTools(storedTools);
-          }
-        } else {
-          const storedTools = StorageService.getTools();
-          setTools(storedTools);
-        }
+        // Load tools - always try API first if authenticated, then fall back to local storage
+        await loadTools(!!(storedUser && AuthService.isValidSession()));
 
         // Load settings
         const storedSettings = StorageService.getSettings();
@@ -111,6 +99,33 @@ const App: React.FC = () => {
 
     initializeApp();
   }, []);
+
+  // Reload tools when user authentication state changes
+  useEffect(() => {
+    if (user) {
+      // User just logged in, reload tools from API
+      loadTools(true);
+    }
+  }, [user]);
+
+  // Function to load tools with fallback logic
+  const loadTools = async (tryApi: boolean = false) => {
+    if (tryApi) {
+      try {
+        const apiTools = await ToolService.loadAllTools();
+        console.log('✅ Tools loaded from API:', apiTools.length);
+        setTools(apiTools);
+        return;
+      } catch (error) {
+        console.warn('Failed to load tools from API, trying local storage:', error);
+      }
+    }
+    
+    // Fallback to local storage
+    const storedTools = StorageService.getTools();
+    console.log('📦 Tools loaded from local storage:', storedTools.length);
+    setTools(storedTools);
+  };
 
   // Save settings to storage whenever they change
   useEffect(() => {

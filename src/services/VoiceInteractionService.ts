@@ -45,6 +45,12 @@ export class VoiceInteractionService {
   private onStateChangeCallback?: (state: VoiceInteractionState) => void;
   private sessionProgress: SessionProgress | null = null;
   private currentAudio: HTMLAudioElement | null = null;
+  private listeningTimeout: NodeJS.Timeout | null = null;
+  private readonly MAX_LISTENING_TIME = 5000; // 5 seconds max - shorter timeout
+  private speechTimeoutId: NodeJS.Timeout | null = null;
+  private silenceTimeoutId: NodeJS.Timeout | null = null;
+  private speechRecognition: any = null; // Browser SpeechRecognition
+  private performanceMode = false; // Set to true to disable LLM processing for faster response
 
   private constructor() {
     this.initializeAIServices();
@@ -84,7 +90,7 @@ export class VoiceInteractionService {
         this.onStateChangeCallback?.('listening');
       },
       
-      onRecordingStop: (result: RecordingResult) => {
+      onRecordingStop: async (result: RecordingResult) => {
         this.isListening = false;
         this.onStateChangeCallback?.('processing');
         console.log(`Recording completed: ${result.duration}ms`);
@@ -96,13 +102,19 @@ export class VoiceInteractionService {
         this.onStateChangeCallback?.('error');
       },
       
-      onTranscriptionResult: (result: STTResult) => {
+      onTranscriptionResult: async (result: STTResult) => {
+        // Use original result immediately, enhance in background
         this.onTranscriptionCallback?.({
           text: result.text,
           confidence: result.confidence,
           isFinal: true
         });
         this.onStateChangeCallback?.('idle');
+        
+        // Enhance transcription in background for future use (non-blocking)
+        if (result.confidence < 0.8) {
+          this.enhanceTranscriptionInBackground(result);
+        }
       }
     });
   }
@@ -139,16 +151,28 @@ export class VoiceInteractionService {
       text: initialPrompt
     });
 
-    // Start with the initial prompt
-    await this.speak(initialPrompt);
-    
-    // Update session state to active
+    // Update session state to active immediately
     session.state = 'active';
-    await VoiceSessionService.updateVoiceSession(session.id, {
+    this.onStateChangeCallback?.('active');
+    
+    // Start with the initial prompt (non-blocking database update)
+    const speakPromise = this.speak(initialPrompt);
+    const updatePromise = VoiceSessionService.updateVoiceSession(session.id, {
       session_state: 'active'
     });
     
-    this.onStateChangeCallback?.('active');
+    // Wait for speech to complete, but don't block on database update
+    await speakPromise;
+    
+    // Start first field immediately after initial prompt
+    setTimeout(() => {
+      this.processNextFieldWithTimeout();
+    }, 500); // Small delay to let initial prompt finish
+    
+    // Database update happens in background
+    updatePromise.catch(error => {
+      console.error('Background session update failed:', error);
+    });
 
     return session;
   }
@@ -184,33 +208,115 @@ export class VoiceInteractionService {
     this.currentSession.currentField = currentField;
     this.sessionProgress.fieldStatuses.set(currentField.id, 'pending');
 
-    // Ask for the field
-    const prompt = currentField.instructionalPrompt || 
-                  this.generateDefaultPrompt(currentField);
+    // Ask for the field using intelligent prompt generation
+    const prompt = await this.generateIntelligentPrompt(currentField);
     
     await this.speak(prompt);
     this.startListening();
   }
 
+  private async generateIntelligentPrompt(field: ToolField): Promise<string> {
+    // Use default prompt immediately for performance, but try LLM with timeout
+    const defaultPrompt = this.generateDefaultPrompt(field);
+    
+    // Skip LLM in performance mode or if not configured
+    if (this.performanceMode || !AIProviderService.areProvidersConfigured()) {
+      return defaultPrompt;
+    }
+    
+    // Use LLM to generate contextual prompts if available, with timeout
+    if (AIProviderService.areProvidersConfigured()) {
+      try {
+        // Race between LLM response and timeout (3 seconds max)
+        const llmPromise = this.generateLLMPrompt(field);
+        const timeoutPromise = new Promise<string>((resolve) => {
+          setTimeout(() => resolve(defaultPrompt), 3000); // 3 second timeout
+        });
+        
+        const result = await Promise.race([llmPromise, timeoutPromise]);
+        return result || defaultPrompt;
+      } catch (error) {
+        console.error('Error generating intelligent prompt:', error);
+      }
+    }
+    
+    // Fallback to enhanced default prompt
+    return defaultPrompt;
+  }
+  
+  private async generateLLMPrompt(field: ToolField): Promise<string> {
+    const tool = await this.getCurrentTool();
+    const conversationContext = await this.getConversationContext();
+    
+    const systemMessage = `You are a healthcare voice assistant. Generate a brief, conversational prompt (max 25 words) for collecting this field. Be warm and clear.`;
+    
+    const prompt = `Field: ${field.name} (${field.type}), Required: ${field.required}. ${field.instructionalPrompt ? `Current: ${field.instructionalPrompt}` : ''}
+
+Generate a brief, natural prompt to ask for this information:`;
+    
+    const llmResponse = await AIProviderService.processWithLLM(prompt, '', systemMessage);
+    
+    if (llmResponse.success && llmResponse.data) {
+      const generatedPrompt = llmResponse.data.text.trim();
+      // Ensure prompt isn't too long for TTS
+      if (generatedPrompt.length > 0 && generatedPrompt.length < 200) {
+        return generatedPrompt;
+      }
+    }
+    
+    return this.generateDefaultPrompt(field);
+  }
+  
+  private async getConversationContext(): Promise<{
+    recentInteractions: string[];
+    completedFields: number;
+    totalFields: number;
+    hasErrors: boolean;
+  }> {
+    const context = {
+      recentInteractions: [] as string[],
+      completedFields: this.sessionProgress?.completedFields || 0,
+      totalFields: this.sessionProgress?.totalFields || 0,
+      hasErrors: false
+    };
+    
+    if (this.currentSession && this.currentSession.transcript) {
+      // Get last few interactions for context
+      const recentTranscript = this.currentSession.transcript.slice(-6); // Last 6 entries
+      context.recentInteractions = recentTranscript.map(entry => 
+        `${entry.speaker}: ${entry.text}`
+      );
+      
+      // Check for recent errors
+      context.hasErrors = recentTranscript.some(entry => 
+        entry.speaker === 'system' && 
+        (entry.text.includes('sorry') || entry.text.includes('try again'))
+      );
+    }
+    
+    return context;
+  }
+  
   private generateDefaultPrompt(field: ToolField): string {
     const requiredText = field.required ? 'required' : 'optional';
     
+    // Enhanced default prompts with better voice interaction guidance
     switch (field.type) {
       case 'text':
-        return `Please provide your ${field.name}. This is a ${requiredText} field.`;
+        return `Please tell me your ${field.name}. This is ${requiredText}.`;
       case 'number':
-        return `Please say the ${field.name} as a number. This is a ${requiredText} field.`;
+        return `What is your ${field.name}? Please say it as a number. This is ${requiredText}.`;
       case 'email':
-        return `Please spell out your ${field.name} email address. This is a ${requiredText} field.`;
+        return `Please spell out your ${field.name} email address clearly. This is ${requiredText}.`;
       case 'phone':
-        return `Please say your ${field.name} phone number. This is a ${requiredText} field.`;
+        return `What's your ${field.name} phone number? You can say the digits in groups. This is ${requiredText}.`;
       case 'date':
-        return `Please say the ${field.name} date. This is a ${requiredText} field.`;
+        return `What is your ${field.name}? You can say it like "September 30, 1994" or "30 September 1994". This is ${requiredText}.`;
       case 'select':
         const options = field.options?.join(', ') || '';
-        return `Please choose your ${field.name} from the following options: ${options}. This is a ${requiredText} field.`;
+        return `Please choose your ${field.name} from these options: ${options}. This is ${requiredText}.`;
       default:
-        return `Please provide your ${field.name}. This is a ${requiredText} field.`;
+        return `Please provide your ${field.name}. This is ${requiredText}.`;
     }
   }
 
@@ -229,15 +335,55 @@ export class VoiceInteractionService {
       throw new Error('No current field');
     }
 
+    // Handle empty or whitespace-only input
+    const trimmedInput = input.trim();
+    if (trimmedInput.length === 0) {
+      console.log('🔇 Empty input received - asking user to repeat');
+      
+      if (!currentField.required) {
+        // Skip optional field
+        console.log(`⏭️ Skipping optional field: ${currentField.name}`);
+        this.sessionProgress.fieldStatuses.set(currentField.id, 'completed');
+        this.sessionProgress.collectedData.set(currentField.name, null);
+        this.sessionProgress.completedFields++;
+        this.sessionProgress.currentFieldIndex++;
+        
+        const skipMessage = `Skipping ${currentField.name}.`;
+        await this.speak(skipMessage);
+        
+        // Move to next field quickly
+        setTimeout(() => {
+          this.processNextFieldWithTimeout();
+        }, 300);
+        
+        return { isValid: true, value: null, errors: [] };
+      } else {
+        // Ask for required field again
+        const retryMessage = `I didn't hear anything. Please tell me your ${currentField.name}.`;
+        await this.speak(retryMessage);
+        
+        // Retry same field quickly
+        setTimeout(() => {
+          this.startListening();
+        }, 300);
+        
+        return { isValid: false, value: null, errors: ['No input detected'] };
+      }
+    }
+
     // Validate the input
-    const validation = this.validateFieldInput(currentField, input);
+    const validation = await this.validateFieldInput(currentField, trimmedInput);
     
     if (validation.isValid) {
-      // Store the validated value
+      // Store the validated value immediately for performance
       this.sessionProgress.collectedData.set(currentField.name, validation.value);
       this.sessionProgress.fieldStatuses.set(currentField.id, 'completed');
       this.currentSession.collectedData[currentField.name] = validation.value;
       
+      // Perform healthcare context validation in background (non-blocking)
+      this.performHealthcareValidationInBackground(currentField, validation.value);
+      
+      // Continue with confirmation
       // Add user input to transcript
       await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
         speaker: 'user',
@@ -245,8 +391,20 @@ export class VoiceInteractionService {
         confidence: 0.9 // Default confidence
       });
       
-      // Confirm the input
-      const confirmationText = `Got it, ${currentField.name}: ${validation.value}`;
+      // Confirm the input with better formatting for dates
+      let confirmationText = `Got it, ${currentField.name}: ${validation.value}`;
+      if (currentField.type === 'date' && validation.value) {
+        // Format date for confirmation (YYYY-MM-DD -> more readable format)
+        const dateMatch = validation.value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (dateMatch) {
+          const [, year, month, day] = dateMatch;
+          const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                            'July', 'August', 'September', 'October', 'November', 'December'];
+          const monthName = monthNames[parseInt(month) - 1];
+          const dayNum = parseInt(day);
+          confirmationText = `Got it, ${currentField.name}: ${monthName} ${dayNum}, ${year}`;
+        }
+      }
       await this.speak(confirmationText);
       
       // Add confirmation to transcript
@@ -255,26 +413,39 @@ export class VoiceInteractionService {
         text: confirmationText
       });
       
+      // Healthcare validation warnings will be handled in background
+      
       // Move to next field
       this.sessionProgress.completedFields++;
       this.sessionProgress.currentFieldIndex++;
       
-      // Save progress to database
-      await this.saveSessionProgress();
+      // Save progress to database in background
+      this.saveSessionProgress().catch(error => {
+        console.error('Background progress save failed:', error);
+      });
       
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause
-      await this.processNextField();
+      // Move to next field immediately with minimal delay
+      setTimeout(() => {
+        this.processNextFieldWithTimeout();
+      }, 300); // Very brief pause for better UX
     } else {
       // Handle validation errors
       this.sessionProgress.fieldStatuses.set(currentField.id, 'error');
       this.sessionProgress.validationErrors.set(currentField.id, validation.errors);
       
-      const errorMessage = validation.errors.join('. ');
-      await this.speak(`I'm sorry, ${errorMessage}. Please try again.`);
+      // Generate contextual error message with timeout
+      const errorMessagePromise = this.generateContextualErrorMessage(currentField, input, validation.errors);
+      const timeoutPromise = new Promise<string>(resolve => {
+        setTimeout(() => resolve(`I'm sorry, ${validation.errors[0]}. Please try again.`), 2000);
+      });
       
-      // Ask for the field again
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause
-      await this.processNextField();
+      const errorMessage = await Promise.race([errorMessagePromise, timeoutPromise]);
+      await this.speak(errorMessage);
+      
+      // Ask for the field again with minimal delay
+      setTimeout(() => {
+        this.processNextFieldWithTimeout();
+      }, 200); // Very quick recovery
     }
 
     return validation;
@@ -379,9 +550,23 @@ export class VoiceInteractionService {
       }
     }
 
+    // Generate intelligent session summary
+    const sessionSummary = await this.generateSessionSummary();
+    if (sessionSummary) {
+      await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
+        speaker: 'system',
+        text: `Session Summary: ${sessionSummary}`
+      });
+    }
+    
     // Complete the session in database
     const finalData = Object.fromEntries(this.sessionProgress.collectedData);
     const transcript = this.currentSession.transcript || [];
+    
+    // Add session summary to final data if generated
+    if (sessionSummary) {
+      finalData._sessionSummary = sessionSummary;
+    }
     
     await VoiceSessionService.completeVoiceSession(
       this.currentSession.id,
@@ -400,10 +585,13 @@ export class VoiceInteractionService {
   public async cancelSession(): Promise<void> {
     if (!this.currentSession) return;
 
-    const cancelMessage = 'Session cancelled.';
-    await this.speak(cancelMessage);
+    // FIRST: Stop all audio/speech immediately
+    this.stopAllAudio();
+    this.stopListening();
     
-    // Add cancellation to transcript
+    const cancelMessage = 'Session cancelled.';
+    
+    // Add cancellation to transcript (without speaking it)
     await VoiceSessionService.addTranscriptEntry(this.currentSession.id, {
       speaker: 'system',
       text: cancelMessage
@@ -421,33 +609,238 @@ export class VoiceInteractionService {
   }
 
   private cleanup(): void {
+    this.stopAllAudio();
     this.stopListening();
     this.currentSession = null;
     this.sessionProgress = null;
   }
+  
+  private stopAllAudio(): void {
+    // Stop any current TTS audio
+    if (this.currentAudio) {
+      this.currentAudio.pause();
+      this.currentAudio.src = '';
+      this.currentAudio = null;
+    }
+    
+    // Stop browser speech synthesis
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    
+    // Stop browser speech recognition
+    if (this.speechRecognition) {
+      this.speechRecognition.stop();
+      this.speechRecognition = null;
+    }
+  }
+  
+  private startBrowserSpeechRecognition(): boolean {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      console.log('Browser speech recognition not available');
+      return false;
+    }
+    
+    try {
+      this.speechRecognition = new SpeechRecognition();
+      this.speechRecognition.continuous = true; // Allow continuous listening
+      this.speechRecognition.interimResults = false; // Only final results to avoid confusion
+      this.speechRecognition.lang = 'en-US';
+      this.speechRecognition.maxAlternatives = 1;
+      
+      this.speechRecognition.onstart = () => {
+        console.log('🎤 Browser speech recognition started');
+        this.isListening = true;
+        this.onStateChangeCallback?.('listening');
+        
+        // Set overall timeout to automatically stop listening
+        this.speechTimeoutId = setTimeout(() => {
+          console.log('⏰ Speech recognition timeout - no speech detected');
+          this.stopListening();
+          this.onStateChangeCallback?.('idle');
+          // Provide empty response to continue flow
+          this.onTranscriptionCallback?.({
+            text: '',
+            confidence: 0,
+            isFinal: true
+          });
+        }, this.MAX_LISTENING_TIME);
+      };
+      
+      this.speechRecognition.onresult = async (event: any) => {
+        const results = event.results;
+        let finalTranscript = '';
+        let highestConfidence = 0;
+        
+        // Process all results to get the most recent final result
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          if (result.isFinal) {
+            const transcript = result[0].transcript.trim();
+            const confidence = result[0].confidence || 0.9;
+            
+            if (transcript.length > 0) {
+              finalTranscript = transcript;
+              highestConfidence = confidence;
+              
+              console.log(`🎯 Final speech result: "${transcript}" (confidence: ${confidence})`);
+              
+              // Clear any silence timeout since we got speech
+              if (this.silenceTimeoutId) {
+                clearTimeout(this.silenceTimeoutId);
+                this.silenceTimeoutId = null;
+              }
+              
+              // Immediately process the result and stop listening
+              this.stopListening();
+              this.onStateChangeCallback?.('processing');
+              
+              this.onTranscriptionCallback?.({
+                text: finalTranscript,
+                confidence: highestConfidence,
+                isFinal: true
+              });
+              
+              return; // Exit early after processing final result
+            }
+          }
+        }
+        
+        // If no final result yet, set up silence detection
+        if (this.silenceTimeoutId) {
+          clearTimeout(this.silenceTimeoutId);
+        }
+        
+        this.silenceTimeoutId = setTimeout(() => {
+          console.log('🔇 Silence detected - stopping recognition');
+          this.stopListening();
+          if (finalTranscript) {
+            this.onTranscriptionCallback?.({
+              text: finalTranscript,
+              confidence: highestConfidence,
+              isFinal: true
+            });
+          } else {
+            // No speech detected
+            this.onTranscriptionCallback?.({
+              text: '',
+              confidence: 0,
+              isFinal: true
+            });
+          }
+        }, 2000); // 2 seconds of silence
+      };
+      
+      this.speechRecognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        this.isListening = false;
+        this.onStateChangeCallback?.('error');
+      };
+      
+      this.speechRecognition.onend = () => {
+        console.log('🎤 Speech recognition ended');
+        this.isListening = false;
+        
+        // Clear all timeouts
+        if (this.speechTimeoutId) {
+          clearTimeout(this.speechTimeoutId);
+          this.speechTimeoutId = null;
+        }
+        if (this.silenceTimeoutId) {
+          clearTimeout(this.silenceTimeoutId);
+          this.silenceTimeoutId = null;
+        }
+        if (this.listeningTimeout) {
+          clearTimeout(this.listeningTimeout);
+          this.listeningTimeout = null;
+        }
+      };
+      
+      this.speechRecognition.start();
+      return true;
+    } catch (error) {
+      console.error('Failed to start browser speech recognition:', error);
+      return false;
+    }
+  }
 
   public startListening(): void {
-    if (!this.voiceRecorder || this.isListening) {
-      console.warn('Cannot start listening - voiceRecorder missing or already listening');
+    if (this.isListening) {
+      console.warn('Already listening');
       return;
     }
     
-    this.voiceRecorder.startRecording().then(success => {
-      if (success) {
-        console.log('🎤 Voice recording started');
-        this.isListening = true;
-        this.onStateChangeCallback?.('listening');
-      }
-    }).catch(error => {
-      console.error('Failed to start voice recording:', error);
+    // Clear any existing timeout
+    if (this.listeningTimeout) {
+      clearTimeout(this.listeningTimeout);
+    }
+    
+    // Try browser speech recognition first if available
+    if (this.startBrowserSpeechRecognition()) {
+      return;
+    }
+    
+    // Fallback to voice recorder service
+    if (this.voiceRecorder) {
+      this.voiceRecorder.startRecording().then(success => {
+        if (success) {
+          console.log('🎤 Voice recording started');
+          this.isListening = true;
+          this.onStateChangeCallback?.('listening');
+          
+          // Set timeout to automatically stop listening
+          this.listeningTimeout = setTimeout(() => {
+            console.log('⏰ Listening timeout - stopping recording');
+            this.stopListening();
+            this.onTranscriptionCallback?.({
+              text: '',
+              confidence: 0,
+              isFinal: true
+            });
+            this.onStateChangeCallback?.('idle');
+          }, this.MAX_LISTENING_TIME);
+        }
+      }).catch(error => {
+        console.error('Failed to start voice recording:', error);
+        this.onStateChangeCallback?.('error');
+      });
+    } else {
+      console.error('No speech recognition available');
       this.onStateChangeCallback?.('error');
-    });
+    }
   }
 
   public stopListening(): void {
-    if (!this.voiceRecorder || !this.isListening) return;
+    if (!this.isListening) return;
     
-    this.voiceRecorder.stopRecording();
+    // Clear all timeouts
+    if (this.listeningTimeout) {
+      clearTimeout(this.listeningTimeout);
+      this.listeningTimeout = null;
+    }
+    if (this.speechTimeoutId) {
+      clearTimeout(this.speechTimeoutId);
+      this.speechTimeoutId = null;
+    }
+    if (this.silenceTimeoutId) {
+      clearTimeout(this.silenceTimeoutId);
+      this.silenceTimeoutId = null;
+    }
+    
+    // Stop browser speech recognition
+    if (this.speechRecognition) {
+      this.speechRecognition.stop();
+      this.speechRecognition = null;
+    }
+    
+    // Stop voice recorder service
+    if (this.voiceRecorder) {
+      this.voiceRecorder.stopRecording();
+    }
+    
+    this.isListening = false;
   }
 
   public async speak(text: string, options?: SpeechSynthesisOptions): Promise<void> {
@@ -527,7 +920,51 @@ export class VoiceInteractionService {
   }
 
   public setTranscriptionCallback(callback: (result: TranscriptionResult) => void): void {
-    this.onTranscriptionCallback = callback;
+    this.onTranscriptionCallback = (result: TranscriptionResult) => {
+      // Validate that this is actually user speech, not system prompts
+      if (this.isValidUserTranscription(result.text)) {
+        console.log(`🎤 Valid user transcription: "${result.text}" (confidence: ${result.confidence})`);
+        callback(result);
+      } else {
+        console.warn(`⚠️ Rejected invalid transcription: "${result.text}" - appears to be system prompt`);
+      }
+    };
+  }
+  
+  private isValidUserTranscription(text: string): boolean {
+    if (!text || text.trim().length === 0) {
+      return false;
+    }
+    
+    // Common system prompt patterns that should not be treated as user input
+    const systemPromptPatterns = [
+      /please tell me your/i,
+      /what is your/i,
+      /please provide your/i,
+      /please spell out/i,
+      /please choose/i,
+      /let's start collecting/i,
+      /starting session/i,
+      /got it,/i,
+      /thank you/i,
+      /session/i,
+      /completed/i
+    ];
+    
+    // Check if text matches any system prompt pattern
+    const isSystemPrompt = systemPromptPatterns.some(pattern => pattern.test(text));
+    
+    if (isSystemPrompt) {
+      return false;
+    }
+    
+    // Additional validation: user input should be relatively short for form fields
+    if (text.length > 200) {
+      console.warn('Transcription too long, likely not user input');
+      return false;
+    }
+    
+    return true;
   }
 
   public setStateChangeCallback(callback: (state: VoiceInteractionState) => void): void {
@@ -548,7 +985,13 @@ export class VoiceInteractionService {
   }
 
   public isSpeechRecognitionSupported(): boolean {
-    // Check if either AI providers are configured or browser API is available
+    // Check browser speech recognition first
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      return true;
+    }
+    
+    // Check if AI providers are configured or voice recorder is supported
     return AIProviderService.areProvidersConfigured() || VoiceRecordingService.isSupported();
   }
 
@@ -560,8 +1003,17 @@ export class VoiceInteractionService {
   public areAIProvidersConfigured(): boolean {
     return AIProviderService.areProvidersConfigured();
   }
+  
+  public setPerformanceMode(enabled: boolean): void {
+    this.performanceMode = enabled;
+    console.log(`🚀 Performance mode ${enabled ? 'enabled' : 'disabled'} - LLM processing ${enabled ? 'disabled' : 'enabled'}`);
+  }
+  
+  public isPerformanceModeEnabled(): boolean {
+    return this.performanceMode;
+  }
 
-  private validateFieldInput(field: ToolField, input: string): FieldValidationResult {
+  private async validateFieldInput(field: ToolField, input: string): Promise<FieldValidationResult> {
     const errors: string[] = [];
     let processedValue = input.trim();
 
@@ -576,26 +1028,22 @@ export class VoiceInteractionService {
       return { isValid: true, value: '', errors: [], field };
     }
 
-    // Type-specific validation and processing
-    switch (field.type) {
-      case 'text':
-        processedValue = this.processTextInput(processedValue, field, errors);
-        break;
-      case 'number':
-        processedValue = this.processNumberInput(processedValue, field, errors);
-        break;
-      case 'email':
-        processedValue = this.processEmailInput(processedValue, field, errors);
-        break;
-      case 'phone':
-        processedValue = this.processPhoneInput(processedValue, field, errors);
-        break;
-      case 'date':
-        processedValue = this.processDateInput(processedValue, field, errors);
-        break;
-      case 'select':
-        processedValue = this.processSelectInput(processedValue, field, errors);
-        break;
+    // Use LLM for intelligent input processing if available
+    if (AIProviderService.areProvidersConfigured()) {
+      const llmResult = await this.processInputWithLLM(field, input);
+      if (llmResult.success) {
+        processedValue = llmResult.processedValue;
+        if (llmResult.errors.length > 0) {
+          errors.push(...llmResult.errors);
+        }
+      } else {
+        console.warn('LLM processing failed, falling back to basic validation:', llmResult.error);
+        // Fall back to basic processing
+        processedValue = await this.processInputBasic(field, input, errors);
+      }
+    } else {
+      // Use basic processing if LLM is not available
+      processedValue = await this.processInputBasic(field, input, errors);
     }
 
     // Additional validation rules
@@ -624,6 +1072,142 @@ export class VoiceInteractionService {
       errors,
       field
     };
+  }
+
+  private async processInputWithLLM(field: ToolField, input: string): Promise<{
+    success: boolean;
+    processedValue: string;
+    errors: string[];
+    error?: string;
+  }> {
+    try {
+      const tool = await this.getCurrentTool();
+      const toolContext = tool ? `Tool: ${tool.name}\nDescription: ${tool.description}` : '';
+      
+      let fieldDescription = `Field Name: ${field.name}\nType: ${field.type}\nRequired: ${field.required}`;
+      if (field.description) {
+        fieldDescription += `\nDescription: ${field.description}`;
+      }
+      if (field.options && field.options.length > 0) {
+        fieldDescription += `\nValid options: ${field.options.join(', ')}`;
+      }
+      
+      const systemMessage = `You are a healthcare voice assistant helping to process user input for medical forms. 
+You need to:
+1. Clean and normalize the input text
+2. Extract the intended value based on field requirements
+3. Handle speech recognition errors and common mistakes
+4. Understand medical terminology and context
+5. Return the processed value in the correct format
+6. Identify any validation errors
+
+For dates: Always return in YYYY-MM-DD format
+For emails: Clean up spacing and ensure proper format
+For phones: Format consistently and extract digits
+For select fields: Match to the closest valid option
+For medical terms: Use proper spelling and formatting`;
+      
+      const prompt = `Process this voice input for a healthcare form field:
+
+${toolContext}
+
+${fieldDescription}
+
+User said: "${input}"
+
+Please respond in JSON format:
+{
+  "processedValue": "cleaned and formatted value",
+  "confidence": 0.95,
+  "errors": ["list of any validation errors"],
+  "reasoning": "brief explanation of processing"
+}
+
+If the input is unclear or invalid, still provide your best interpretation but include appropriate errors.`;
+      
+      const llmResponse = await AIProviderService.processWithLLM(prompt, '', systemMessage);
+      
+      if (!llmResponse.success || !llmResponse.data) {
+        return {
+          success: false,
+          processedValue: input.trim(),
+          errors: [],
+          error: llmResponse.error || 'LLM processing failed'
+        };
+      }
+      
+      // Parse the JSON response
+      try {
+        const result = JSON.parse(llmResponse.data.text.trim());
+        return {
+          success: true,
+          processedValue: result.processedValue || input.trim(),
+          errors: result.errors || [],
+        };
+      } catch (parseError) {
+        console.error('Failed to parse LLM response:', parseError);
+        console.log('Raw LLM response:', llmResponse.data.text);
+        
+        // Try to extract value from non-JSON response
+        const fallbackValue = this.extractValueFromLLMResponse(llmResponse.data.text, field);
+        return {
+          success: true,
+          processedValue: fallbackValue || input.trim(),
+          errors: []
+        };
+      }
+    } catch (error) {
+      console.error('LLM input processing error:', error);
+      return {
+        success: false,
+        processedValue: input.trim(),
+        errors: [],
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+  
+  private extractValueFromLLMResponse(response: string, field: ToolField): string {
+    // Simple fallback to extract value when JSON parsing fails
+    const lines = response.split('\n');
+    for (const line of lines) {
+      if (line.toLowerCase().includes('value') || line.toLowerCase().includes('result')) {
+        // Try to extract a reasonable value
+        const match = line.match(/["']([^"']+)["']/);
+        if (match) {
+          return match[1];
+        }
+      }
+    }
+    return response.trim();
+  }
+  
+  private async processInputBasic(field: ToolField, input: string, errors: string[]): Promise<string> {
+    let processedValue = input.trim();
+    
+    // Type-specific validation and processing
+    switch (field.type) {
+      case 'text':
+        processedValue = this.processTextInput(processedValue, field, errors);
+        break;
+      case 'number':
+        processedValue = this.processNumberInput(processedValue, field, errors);
+        break;
+      case 'email':
+        processedValue = this.processEmailInput(processedValue, field, errors);
+        break;
+      case 'phone':
+        processedValue = this.processPhoneInput(processedValue, field, errors);
+        break;
+      case 'date':
+        processedValue = await this.processDateInput(processedValue, field, errors);
+        break;
+      case 'select':
+        processedValue = this.processSelectInput(processedValue, field, errors);
+        break;
+    }
+    
+    return processedValue;
   }
 
   private processTextInput(input: string, field: ToolField, errors: string[]): string {
@@ -667,8 +1251,24 @@ export class VoiceInteractionService {
     return digits;
   }
 
-  private processDateInput(input: string, field: ToolField, errors: string[]): string {
-    // Try to parse various date formats
+  private async processDateInput(input: string, field: ToolField, errors: string[]): Promise<string> {
+    // First try standard date patterns
+    const standardResult = this.processStandardDateFormats(input);
+    if (standardResult) {
+      return standardResult;
+    }
+    
+    // If standard parsing fails, try natural language processing with LLM
+    const llmResult = await this.processNaturalLanguageDate(input);
+    if (llmResult) {
+      return llmResult;
+    }
+    
+    errors.push(`${field.name} must be a valid date. Try formats like "30 September 1994" or "09/30/1994"`);
+    return input;
+  }
+  
+  private processStandardDateFormats(input: string): string | null {
     const datePatterns = [
       /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/,  // MM/DD/YYYY or MM-DD-YYYY
       /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/,  // YYYY/MM/DD or YYYY-MM-DD
@@ -697,8 +1297,133 @@ export class VoiceInteractionService {
       }
     }
     
-    errors.push(`${field.name} must be a valid date (MM/DD/YYYY format preferred)`);
-    return input;
+    return null;
+  }
+  
+  private async processNaturalLanguageDate(input: string): Promise<string | null> {
+    try {
+      // Clean up the input (speech recognition might add extra characters)
+      const cleanInput = input.replace(/[+\-\*\/]/g, ' ').replace(/\s+/g, ' ').trim();
+      console.log(`🧠 Processing natural language date: "${cleanInput}"`);
+      
+      // Try local date parsing first (faster)
+      const localResult = this.parseNaturalDateLocally(cleanInput);
+      if (localResult) {
+        console.log(`✅ Local date parsing successful: ${localResult}`);
+        return localResult;
+      }
+      
+      // Fallback to LLM if available and local parsing fails
+      if (AIProviderService.areProvidersConfigured()) {
+        console.log('🤖 Using LLM for date parsing...');
+        const llmResult = await this.parseNaturalDateWithLLM(cleanInput);
+        if (llmResult) {
+          console.log(`✅ LLM date parsing successful: ${llmResult}`);
+          return llmResult;
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Natural language date processing error:', error);
+      return null;
+    }
+  }
+  
+  private parseNaturalDateLocally(input: string): string | null {
+    // Common month name mappings
+    const monthNames: Record<string, string> = {
+      'january': '01', 'jan': '01',
+      'february': '02', 'feb': '02',
+      'march': '03', 'mar': '03',
+      'april': '04', 'apr': '04',
+      'may': '05',
+      'june': '06', 'jun': '06',
+      'july': '07', 'jul': '07',
+      'august': '08', 'aug': '08',
+      'september': '09', 'sep': '09', 'sept': '09',
+      'october': '10', 'oct': '10',
+      'november': '11', 'nov': '11',
+      'december': '12', 'dec': '12'
+    };
+    
+    const lowerInput = input.toLowerCase();
+    
+    // Pattern: "30 September 1994" or "September 30 1994"
+    const patterns = [
+      /^(\d{1,2})\s+(\w+)\s+(\d{4})$/, // Day Month Year
+      /^(\w+)\s+(\d{1,2})\s+(\d{4})$/, // Month Day Year
+      /^(\d{1,2})\s+(\w+)\s+(\d{2})$/,  // Day Month YY
+      /^(\w+)\s+(\d{1,2})\s+(\d{2})$/   // Month Day YY
+    ];
+    
+    for (let i = 0; i < patterns.length; i++) {
+      const match = lowerInput.match(patterns[i]);
+      if (match) {
+        let day, month, year;
+        
+        if (i % 2 === 0) { // Day Month Year patterns
+          [, day, month, year] = match;
+        } else { // Month Day Year patterns
+          [, month, day, year] = match;
+        }
+        
+        // Convert month name to number
+        const monthNum = monthNames[month];
+        if (!monthNum) continue;
+        
+        // Handle 2-digit years
+        if (year.length === 2) {
+          const yearNum = parseInt(year);
+          year = yearNum < 50 ? `20${year}` : `19${year}`;
+        }
+        
+        // Validate the date
+        const dayNum = parseInt(day);
+        const monthNumInt = parseInt(monthNum);
+        const yearNum = parseInt(year);
+        
+        if (dayNum >= 1 && dayNum <= 31 && monthNumInt >= 1 && monthNumInt <= 12 && yearNum >= 1900 && yearNum <= 2100) {
+          const testDate = new Date(yearNum, monthNumInt - 1, dayNum);
+          if (testDate.getDate() === dayNum && testDate.getMonth() === monthNumInt - 1 && testDate.getFullYear() === yearNum) {
+            return `${year}-${monthNum}-${dayNum.toString().padStart(2, '0')}`;
+          }
+        }
+      }
+    }
+    
+    return null;
+  }
+  
+  private async parseNaturalDateWithLLM(input: string): Promise<string | null> {
+    try {
+      const prompt = `Parse the following natural language date and return ONLY the date in YYYY-MM-DD format. If you cannot parse it, return "INVALID".
+
+Input: "${input}"
+
+Examples:
+- "30 September 1994" → "1994-09-30"
+- "March 15 1985" → "1985-03-15"
+- "12/25/1990" → "1990-12-25"
+
+Output:`;
+
+      const llmResponse = await AIProviderService.processWithLLM(prompt);
+      
+      if (llmResponse.success && llmResponse.data) {
+        const result = llmResponse.data.text.trim();
+        
+        // Validate the LLM response format
+        if (/^\d{4}-\d{2}-\d{2}$/.test(result) && result !== "INVALID") {
+          return result;
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('LLM date parsing error:', error);
+      return null;
+    }
   }
 
   private processSelectInput(input: string, field: ToolField, errors: string[]): string {
@@ -729,6 +1454,292 @@ export class VoiceInteractionService {
     errors.push(`${field.name} must be one of: ${field.options.join(', ')}`);
     return input;
   }
+
+  private async generateContextualErrorMessage(field: ToolField, userInput: string, errors: string[]): Promise<string> {
+    // If LLM is not available, fall back to basic error message
+    if (!AIProviderService.areProvidersConfigured()) {
+      return `I'm sorry, ${errors.join('. ')}. Please try again.`;
+    }
+
+    try {
+      const tool = await this.getCurrentTool();
+      const toolContext = tool ? `Tool: ${tool.name}\nDescription: ${tool.description}` : '';
+      
+      const systemMessage = `You are a helpful healthcare voice assistant. When users make mistakes in voice input, you should:
+1. Be empathetic and encouraging
+2. Clearly explain what went wrong
+3. Provide specific, actionable guidance
+4. Use conversational, friendly language
+5. Give examples when helpful
+6. Keep responses concise but helpful
+
+Avoid technical jargon and make the user feel comfortable to try again.`;
+      
+      const prompt = `The user tried to provide input for a healthcare form field but there were validation errors.
+
+${toolContext}
+
+Field Information:
+- Name: ${field.name}
+- Type: ${field.type}
+- Required: ${field.required}
+${field.description ? `- Description: ${field.description}` : ''}
+${field.options ? `- Valid options: ${field.options.join(', ')}` : ''}
+
+What the user said: "${userInput}"
+
+Validation errors: ${errors.join('; ')}
+
+Generate a helpful, conversational error message that:
+1. Acknowledges what the user tried to do
+2. Explains the issue clearly
+3. Guides them on what to say next
+4. Is encouraging and friendly
+
+Keep it under 50 words and make it sound natural for voice interaction.`;
+      
+      const llmResponse = await AIProviderService.processWithLLM(prompt, '', systemMessage);
+      
+      if (llmResponse.success && llmResponse.data) {
+        const generatedMessage = llmResponse.data.text.trim();
+        // Ensure the message isn't too long for TTS
+        if (generatedMessage.length < 300) {
+          return generatedMessage;
+        }
+      }
+    } catch (error) {
+      console.error('Error generating contextual error message:', error);
+    }
+    
+    // Fallback to basic error message
+    return `I'm sorry, ${errors.join('. ')}. Please try again.`;
+  }
+  
+  private async enhanceTranscriptionWithLLM(result: STTResult): Promise<STTResult> {
+    // Only enhance if LLM is available and confidence is below threshold
+    if (!AIProviderService.areProvidersConfigured() || result.confidence > 0.9) {
+      return result;
+    }
+    
+    try {
+      const tool = await this.getCurrentTool();
+      const currentField = this.currentSession?.currentField;
+      
+      const systemMessage = `You are a healthcare voice assistant that corrects speech-to-text transcription errors. Your job is to:
+1. Fix obvious speech recognition mistakes
+2. Correct medical terminology and drug names
+3. Handle homophones (e.g., "to" vs "two", "there" vs "their")
+4. Maintain the original meaning and intent
+5. Only make corrections when you're confident
+6. Preserve proper nouns and specific details
+
+Do not change the fundamental meaning or add information not present.`;
+      
+      let contextInfo = '';
+      if (tool) {
+        contextInfo += `Tool context: ${tool.name}\n`;
+      }
+      if (currentField) {
+        contextInfo += `Current field: ${currentField.name} (${currentField.type})\n`;
+        if (currentField.options) {
+          contextInfo += `Valid options: ${currentField.options.join(', ')}\n`;
+        }
+      }
+      
+      const prompt = `${contextInfo}
+Original transcription: "${result.text}"
+Confidence: ${result.confidence}
+
+Please review and correct this transcription if needed. Return only the corrected text, or the original if no corrections are needed. Do not include explanations or additional text.`;
+      
+      const llmResponse = await AIProviderService.processWithLLM(prompt, '', systemMessage);
+      
+      if (llmResponse.success && llmResponse.data) {
+        const enhancedText = llmResponse.data.text.trim();
+        // Only use the enhanced text if it's reasonable (not too different in length)
+        const lengthRatio = enhancedText.length / result.text.length;
+        if (lengthRatio > 0.5 && lengthRatio < 2.0 && enhancedText.length > 0) {
+          return {
+            ...result,
+            text: enhancedText,
+            confidence: Math.min(0.95, result.confidence + 0.1) // Slight confidence boost
+          };
+        }
+      }
+    } catch (error) {
+      console.error('Error enhancing transcription with LLM:', error);
+    }
+    
+    return result;
+  }
+  
+  private async performHealthcareContextValidation(field: ToolField, value: string): Promise<{
+    isValid: boolean;
+    warnings: string[];
+    suggestions: string[];
+  }> {
+    if (!AIProviderService.areProvidersConfigured()) {
+      return { isValid: true, warnings: [], suggestions: [] };
+    }
+    
+    try {
+      const tool = await this.getCurrentTool();
+      const systemMessage = `You are a healthcare data validation assistant. Analyze user input for medical forms and identify potential issues:
+1. Medical terminology accuracy
+2. Common data entry errors
+3. Unrealistic values (dates, measurements, etc.)
+4. Potential safety concerns
+5. Data consistency issues
+
+Provide helpful warnings and suggestions without being overly restrictive. Focus on obvious errors or safety concerns.`;
+      
+      const prompt = `Validate this healthcare form input:
+
+${tool ? `Tool: ${tool.name}\nTool Description: ${tool.description}\n` : ''}
+Field: ${field.name} (${field.type})
+${field.description ? `Field Description: ${field.description}\n` : ''}
+User Input: "${value}"
+
+Analyze for:
+- Medical terminology correctness
+- Realistic values and ranges
+- Common input errors
+- Potential safety concerns
+
+Respond in JSON format:
+{
+  "isValid": true/false,
+  "warnings": ["list of warnings if any"],
+  "suggestions": ["list of improvement suggestions"]
 }
 
+Only flag serious concerns. Minor issues should be warnings, not validation failures.`;
+      
+      const llmResponse = await AIProviderService.processWithLLM(prompt, '', systemMessage);
+      
+      if (llmResponse.success && llmResponse.data) {
+        try {
+          const result = JSON.parse(llmResponse.data.text.trim());
+          return {
+            isValid: result.isValid !== false, // Default to valid if parsing fails
+            warnings: result.warnings || [],
+            suggestions: result.suggestions || []
+          };
+        } catch (parseError) {
+          console.error('Failed to parse healthcare validation response:', parseError);
+        }
+      }
+    } catch (error) {
+      console.error('Error performing healthcare context validation:', error);
+    }
+    
+    return { isValid: true, warnings: [], suggestions: [] };
+  }
+  
+  public async generateSessionSummary(): Promise<string | null> {
+    if (!AIProviderService.areProvidersConfigured() || !this.currentSession || !this.sessionProgress) {
+      return null;
+    }
+    
+    try {
+      const tool = await this.getCurrentTool();
+      const collectedData = Object.fromEntries(this.sessionProgress.collectedData);
+      const transcript = this.currentSession.transcript || [];
+      
+      const systemMessage = `You are a healthcare assistant that generates session summaries. Create a concise, professional summary that:
+1. Highlights key information collected
+2. Notes any potential concerns or inconsistencies
+3. Suggests follow-up actions if needed
+4. Uses appropriate medical language
+5. Maintains patient confidentiality
+6. Is useful for healthcare providers`;
+      
+      const prompt = `Generate a session summary for this healthcare voice interaction:
+
+${tool ? `Tool: ${tool.name}\nPurpose: ${tool.description}\n` : ''}
+Session Duration: ${this.getSessionDuration()}
+Completed Fields: ${this.sessionProgress.completedFields}/${this.sessionProgress.totalFields}
+
+Collected Data:
+${Object.entries(collectedData).map(([key, value]) => `- ${key}: ${value}`).join('\n')}
+
+Conversation Quality:
+- Total exchanges: ${transcript.length}
+- User interactions: ${transcript.filter(t => t.speaker === 'user').length}
+- Error corrections: ${transcript.filter(t => t.speaker === 'system' && t.text.includes('sorry')).length}
+
+Generate a professional summary (150-200 words) that a healthcare provider would find useful. Focus on the medical information collected and any notable aspects of the interaction.`;
+      
+      const llmResponse = await AIProviderService.processWithLLM(prompt, '', systemMessage);
+      
+      if (llmResponse.success && llmResponse.data) {
+        return llmResponse.data.text.trim();
+      }
+    } catch (error) {
+      console.error('Error generating session summary:', error);
+    }
+    
+    return null;
+  }
+  
+  private getSessionDuration(): string {
+    if (!this.currentSession?.startTime) return 'Unknown';
+    
+    const start = new Date(this.currentSession.startTime);
+    const now = new Date();
+    const durationMs = now.getTime() - start.getTime();
+    const minutes = Math.floor(durationMs / 60000);
+    const seconds = Math.floor((durationMs % 60000) / 1000);
+    
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+  
+  // Background processing methods for performance optimization
+  
+  private enhanceTranscriptionInBackground(result: STTResult): void {
+    // Don't await this - let it run in background
+    this.enhanceTranscriptionWithLLM(result).then(enhancedResult => {
+      if (enhancedResult.text !== result.text) {
+        console.log(`🔄 Enhanced transcription: "${result.text}" → "${enhancedResult.text}"`);
+        // Could potentially update UI or store for future reference
+      }
+    }).catch(error => {
+      console.error('Background transcription enhancement failed:', error);
+    });
+  }
+  
+  private performHealthcareValidationInBackground(field: ToolField, value: string): void {
+    // Don't await this - let it run in background
+    this.performHealthcareContextValidation(field, value).then(validation => {
+      if (validation.warnings.length > 0) {
+        console.log(`⚠️ Healthcare validation warnings for ${field.name}:`, validation.warnings);
+        // Could potentially show non-blocking notifications to user
+      }
+      if (validation.suggestions.length > 0) {
+        console.log(`💡 Healthcare validation suggestions for ${field.name}:`, validation.suggestions);
+      }
+    }).catch(error => {
+      console.error('Background healthcare validation failed:', error);
+    });
+  }
+  
+  // Add a method to manually skip to next field with timeout
+  public async processNextFieldWithTimeout(): Promise<void> {
+    const timeout = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        console.log('⏰ Field processing timeout, moving to next field');
+        resolve();
+      }, 2000); // 2 second max for field processing
+    });
+    
+    const fieldProcessing = this.processNextField();
+    
+    try {
+      await Promise.race([fieldProcessing, timeout]);
+    } catch (error) {
+      console.error('Error in field processing:', error);
+      // Continue anyway
+    }
+  }
+}
 export default VoiceInteractionService;

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Healthcare Voice Agent - Connection Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-result { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .info { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        pre { background-color: #f8f9fa; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Healthcare Voice Agent - Connection Test</h1>
+    
+    <div id="results"></div>
+    
+    <button onclick="testBackendHealth()">Test Backend Health</button>
+    <button onclick="testLogin()">Test Login</button>
+    <button onclick="testProviders()">Test Providers API</button>
+    <button onclick="runAllTests()">Run All Tests</button>
+    
+    <script>
+        const API_BASE = 'http://localhost:3001';
+        let authToken = null;
+        
+        function log(message, type = 'info') {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.innerHTML = message;
+            results.appendChild(div);
+        }
+        
+        async function testBackendHealth() {
+            log('Testing backend health...', 'info');
+            try {
+                const response = await fetch(`${API_BASE}/api/health`);
+                const data = await response.json();
+                if (response.ok) {
+                    log(`✅ Backend health check passed: ${data.status}`, 'success');
+                    return true;
+                } else {
+                    log(`❌ Backend health check failed: ${response.status}`, 'error');
+                    return false;
+                }
+            } catch (error) {
+                log(`❌ Backend connection failed: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function testLogin() {
+            log('Testing login...', 'info');
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username: 'demo',
+                        password: 'demo123'
+                    })
+                });
+                
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    authToken = data.token;
+                    log(`✅ Login successful! Token received.`, 'success');
+                    log(`User: ${data.user.username} (${data.user.role})`, 'info');
+                    return true;
+                } else {
+                    log(`❌ Login failed: ${data.error || 'Unknown error'}`, 'error');
+                    return false;
+                }
+            } catch (error) {
+                log(`❌ Login error: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function testProviders() {
+            log('Testing providers API...', 'info');
+            if (!authToken) {
+                log('❌ No auth token available. Please login first.', 'error');
+                return false;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/providers`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    log(`✅ Providers API successful!`, 'success');
+                    log(`<pre>${JSON.stringify(data.data, null, 2)}</pre>`, 'info');
+                    return true;
+                } else {
+                    log(`❌ Providers API failed: ${data.error || 'Unknown error'}`, 'error');
+                    return false;
+                }
+            } catch (error) {
+                log(`❌ Providers API error: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        async function runAllTests() {
+            document.getElementById('results').innerHTML = '';
+            log('🧪 Running all connection tests...', 'info');
+            
+            const healthOk = await testBackendHealth();
+            if (!healthOk) return;
+            
+            const loginOk = await testLogin();
+            if (!loginOk) return;
+            
+            const providersOk = await testProviders();
+            
+            if (healthOk && loginOk && providersOk) {
+                log('🎉 All tests passed! Frontend-backend connection is working properly.', 'success');
+            }
+        }
+        
+        // Run tests automatically on page load
+        window.onload = () => {
+            log('Welcome to the Healthcare Voice Agent connection test!', 'info');
+            log('This test will verify the connection between frontend and backend.', 'info');
+        };
+    </script>
+</body>
+</html>

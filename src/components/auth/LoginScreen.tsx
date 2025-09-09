@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
-import { LoginCredentials } from '@/types';
+import { LoginCredentials, Tool } from '@/types';
 import { AuthService } from '@/services/AuthService';
+import { ToolService } from '@/services/ToolService';
+import { StorageService } from '@/services/StorageService';
 import { useApp } from '../../App';
 
 interface LoginFormData {
@@ -14,8 +16,26 @@ interface LoginFormData {
 
 const LoginScreen: React.FC = () => {
   const navigate = useNavigate();
-  const { setUser } = useApp();
+  const { setUser, setTools } = useApp();
   const [isLoading, setIsLoading] = useState(false);
+
+  // Function to create demo tools when API is unavailable
+  const createDemoTools = () => {
+    const demoTools: Tool[] = [
+      ToolService.createToolFromTemplate('patient-registration', {
+        name: 'Patient Registration',
+        description: 'Collect new patient information including demographics and insurance details'
+      }),
+      ToolService.createToolFromTemplate('claims-intake', {
+        name: 'Insurance Claims Intake',
+        description: 'Process insurance claims with patient and incident information'
+      })
+    ].filter((tool): tool is Tool => tool !== null);
+
+    setTools(demoTools);
+    StorageService.saveTools(demoTools);
+    console.log('📦 Demo tools created in local storage:', demoTools.length);
+  };
   
   const {
     register,
@@ -37,6 +57,10 @@ const LoginScreen: React.FC = () => {
       
       if (response.success && response.data) {
         setUser(response.data);
+        
+        // Create demo tools for immediate display (will be replaced by API data if available)
+        createDemoTools();
+        
         toast.success('Login successful!');
         navigate('/dashboard');
       } else {

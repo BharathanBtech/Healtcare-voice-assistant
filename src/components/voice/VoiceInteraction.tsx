@@ -97,8 +97,22 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
       const progress = service.getSessionProgress();
       if (progress) {
         setSessionProgress(progress);
+        
+        // Update current prompt based on progress
+        updateCurrentPrompt();
       }
     });
+  };
+  
+  const updateCurrentPrompt = async () => {
+    if (!tool || !sessionProgress) return;
+    
+    const currentField = tool.fields?.[sessionProgress.currentFieldIndex];
+    if (currentField) {
+      const prompt = currentField.instructionalPrompt || 
+        `Please provide your ${currentField.name}.`;
+      setCurrentPrompt(prompt);
+    }
   };
 
   const startSession = async () => {

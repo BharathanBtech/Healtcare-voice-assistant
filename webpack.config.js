@@ -56,7 +56,7 @@ module.exports = (env, argv) => {
         directory: path.join(__dirname, 'public'),
       },
       compress: true,
-      port: 3000,
+      port: 8080,
       historyApiFallback: true,
       hot: true,
     },

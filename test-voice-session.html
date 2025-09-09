@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Voice Session Flow Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-result { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .info { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+        .warning { background-color: #fff3cd; border: 1px solid #ffeaa7; color: #856404; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        pre { background-color: #f8f9fa; padding: 10px; border-radius: 4px; max-height: 200px; overflow-y: auto; }
+        .session-info { border: 2px solid #007bff; padding: 15px; margin: 10px 0; border-radius: 8px; }
+        .step-counter { font-weight: bold; color: #007bff; }
+    </style>
+</head>
+<body>
+    <h1>🎤 Voice Session Flow Test</h1>
+    <p>This test simulates the complete voice interaction session workflow without actual audio.</p>
+    
+    <div id="results"></div>
+    
+    <div class="session-info" id="sessionInfo" style="display: none;">
+        <h3>📋 Current Session</h3>
+        <div id="sessionDetails"></div>
+    </div>
+    
+    <button onclick="testCompleteVoiceFlow()">🧪 Test Complete Voice Session Flow</button>
+    <button onclick="testErrorHandling()">⚠️ Test Error Handling</button>
+    <button onclick="clearResults()">🗑️ Clear Results</button>
+    
+    <script>
+        const API_BASE = 'http://localhost:3001';
+        let authToken = null;
+        let currentSessionId = null;
+        let stepCounter = 1;
+        
+        function log(message, type = 'info') {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.innerHTML = `<span class="step-counter">[Step ${stepCounter++}]</span> ${message}`;
+            results.appendChild(div);
+            results.scrollTop = results.scrollHeight;
+        }
+        
+        function updateSessionInfo(session) {
+            const sessionInfo = document.getElementById('sessionInfo');
+            const sessionDetails = document.getElementById('sessionDetails');
+            
+            sessionInfo.style.display = 'block';
+            sessionDetails.innerHTML = `
+                <strong>Session ID:</strong> ${session.id}<br>
+                <strong>State:</strong> <span style="color: ${getStateColor(session.session_state)}">${session.session_state}</span><br>
+                <strong>Tool ID:</strong> ${session.tool_id}<br>
+                <strong>Start Time:</strong> ${new Date(session.start_time).toLocaleString()}<br>
+                <strong>Collected Data:</strong> <pre>${JSON.stringify(session.collected_data, null, 2)}</pre>
+                <strong>Field Statuses:</strong> <pre>${JSON.stringify(session.field_statuses, null, 2)}</pre>
+            `;
+        }
+        
+        function getStateColor(state) {
+            const colors = {
+                'initializing': '#ffc107',
+                'active': '#28a745',
+                'paused': '#fd7e14',
+                'completed': '#6f42c1',
+                'cancelled': '#dc3545',
+                'error': '#dc3545'
+            };
+            return colors[state] || '#6c757d';
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('sessionInfo').style.display = 'none';
+            stepCounter = 1;
+        }
+        
+        async function authenticate() {
+            log('🔐 Authenticating with demo credentials...', 'info');
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    mode: 'cors',
+                    body: JSON.stringify({ username: 'demo', password: 'demo123' })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                if (data.success) {
+                    authToken = data.token;
+                    log(`✅ Authentication successful! User: ${data.user.username}`, 'success');
+                    return true;
+                } else {
+                    log(`❌ Authentication failed: ${data.error}`, 'error');
+                    return false;
+                }
+            } catch (error) {
+                log(`❌ Authentication error: ${error.message}`, 'error');
+                if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
+                    log('💡 Tip: Make sure the backend server is running on port 3001', 'warning');
+                    log('💡 Run: npm run dev:server', 'warning');
+                }
+                return false;
+            }
+        }
+        
+        async function getTools() {
+            log('📋 Fetching available tools...', 'info');
+            try {
+                const response = await fetch(`${API_BASE}/api/tools`, {
+                    headers: { 
+                        'Authorization': `Bearer ${authToken}`,
+                        'Accept': 'application/json'
+                    },
+                    mode: 'cors'
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                if (data.success) {
+                    log(`✅ Found ${data.data.length} tools`, 'success');
+                    if (data.data.length > 0) {
+                        log(`Using tool: "${data.data[0].name}" (${data.data[0].fields?.length || 0} fields)`, 'info');
+                        return data.data[0];
+                    } else {
+                        log('⚠️ No tools available for testing', 'warning');
+                        return null;
+                    }
+                } else {
+                    log(`❌ Failed to fetch tools: ${data.error}`, 'error');
+                    return null;
+                }
+            } catch (error) {
+                log(`❌ Error fetching tools: ${error.message}`, 'error');
+                if (error.message.includes('Failed to fetch')) {
+                    log('💡 Backend connection issue - check if server is running', 'warning');
+                }
+                return null;
+            }
+        }
+        
+        async function createVoiceSession(tool) {
+            log(`🎤 Creating voice session for tool "${tool.name}"...`, 'info');
+            try {
+                const sessionData = {
+                    tool_id: tool.id,
+                    session_state: 'initializing',
+                    collected_data: {},
+                    field_statuses: {},
+                    transcript: [],
+                    start_time: new Date().toISOString()
+                };
+                
+                const response = await fetch(`${API_BASE}/api/voice-sessions`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    mode: 'cors',
+                    body: JSON.stringify(sessionData)
+                });
+                
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    currentSessionId = data.data.id;
+                    updateSessionInfo(data.data);
+                    log(`✅ Voice session created successfully! ID: ${currentSessionId}`, 'success');
+                    return data.data;
+                } else {
+                    log(`❌ Failed to create session: ${data.error}`, 'error');
+                    return null;
+                }
+            } catch (error) {
+                log(`❌ Error creating session: ${error.message}`, 'error');
+                return null;
+            }
+        }
+        
+        async function simulateVoiceInteraction(session, tool) {
+            log('🗣️ Simulating voice interaction flow...', 'info');
+            
+            // Simulate starting the session
+            await updateSessionState('active', { message: 'Session activated' });
+            await sleep(1000);
+            
+            // Simulate collecting data for each field
+            const mockData = {};
+            const mockStatuses = {};
+            
+            if (tool.fields && tool.fields.length > 0) {
+                for (let i = 0; i < tool.fields.length; i++) {
+                    const field = tool.fields[i];
+                    log(`📝 Processing field: "${field.name}" (${field.type})`, 'info');
+                    
+                    // Simulate user response based on field type
+                    let mockValue;
+                    switch (field.type) {
+                        case 'text':
+                        case 'name':
+                            mockValue = `Sample ${field.name}`;
+                            break;
+                        case 'number':
+                        case 'age':
+                            mockValue = Math.floor(Math.random() * 50) + 20;
+                            break;
+                        case 'phone':
+                            mockValue = `555-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+                            break;
+                        case 'email':
+                            mockValue = `user@example.com`;
+                            break;
+                        case 'select':
+                            if (field.options && field.options.length > 0) {
+                                mockValue = field.options[0];
+                            } else {
+                                mockValue = 'Option 1';
+                            }
+                            break;
+                        case 'date':
+                            mockValue = new Date().toISOString().split('T')[0];
+                            break;
+                        default:
+                            mockValue = `Sample value for ${field.name}`;
+                    }
+                    
+                    mockData[field.id || field.name] = mockValue;
+                    mockStatuses[field.id || field.name] = 'completed';
+                    
+                    log(`✅ Field "${field.name}" completed with value: ${JSON.stringify(mockValue)}`, 'success');
+                    
+                    // Update session with progress
+                    await updateSessionData(mockData, mockStatuses);
+                    await sleep(500);
+                }
+            } else {
+                log('⚠️ No fields defined for this tool', 'warning');
+            }
+            
+            return { mockData, mockStatuses };
+        }
+        
+        async function updateSessionState(newState, additionalData = {}) {
+            log(`🔄 Updating session state to: ${newState}`, 'info');
+            try {
+                const updateData = {
+                    session_state: newState,
+                    ...additionalData
+                };
+                
+                if (newState === 'completed') {
+                    updateData.end_time = new Date().toISOString();
+                }
+                
+                const response = await fetch(`${API_BASE}/api/voice-sessions/${currentSessionId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    mode: 'cors',
+                    body: JSON.stringify(updateData)
+                });
+                
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    updateSessionInfo(data.data);
+                    log(`✅ Session state updated to: ${newState}`, 'success');
+                    return data.data;
+                } else {
+                    log(`❌ Failed to update session state: ${data.error}`, 'error');
+                    return null;
+                }
+            } catch (error) {
+                log(`❌ Error updating session state: ${error.message}`, 'error');
+                return null;
+            }
+        }
+        
+        async function updateSessionData(collectedData, fieldStatuses) {
+            try {
+                const updateData = {
+                    collected_data: collectedData,
+                    field_statuses: fieldStatuses,
+                    session_state: 'active'
+                };
+                
+                const response = await fetch(`${API_BASE}/api/voice-sessions/${currentSessionId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    mode: 'cors',
+                    body: JSON.stringify(updateData)
+                });
+                
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    updateSessionInfo(data.data);
+                    return data.data;
+                } else {
+                    log(`❌ Failed to update session data: ${data.error}`, 'error');
+                    return null;
+                }
+            } catch (error) {
+                log(`❌ Error updating session data: ${error.message}`, 'error');
+                return null;
+            }
+        }
+        
+        async function testCompleteVoiceFlow() {
+            clearResults();
+            log('🚀 Starting complete voice session flow test...', 'info');
+            
+            // Step 1: Authenticate
+            const authSuccess = await authenticate();
+            if (!authSuccess) return;
+            
+            // Step 2: Get available tools
+            const tool = await getTools();
+            if (!tool) return;
+            
+            // Step 3: Create voice session
+            const session = await createVoiceSession(tool);
+            if (!session) return;
+            
+            // Step 4: Simulate voice interaction
+            const { mockData, mockStatuses } = await simulateVoiceInteraction(session, tool);
+            
+            // Step 5: Complete the session
+            await updateSessionState('completed', {
+                collected_data: mockData,
+                field_statuses: mockStatuses
+            });
+            
+            log('🎉 Complete voice session flow test completed successfully!', 'success');
+            log(`📊 Final collected data: ${Object.keys(mockData).length} fields completed`, 'info');
+        }
+        
+        async function testErrorHandling() {
+            clearResults();
+            log('⚠️ Testing error handling scenarios...', 'info');
+            
+            // Test without authentication
+            log('Testing API call without authentication...', 'info');
+            try {
+                const response = await fetch(`${API_BASE}/api/voice-sessions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tool_id: 'fake-id', session_state: 'initializing' })
+                });
+                
+                if (response.status === 401) {
+                    log('✅ Correctly rejected unauthenticated request (401)', 'success');
+                } else {
+                    log(`❌ Unexpected response: ${response.status}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Network error: ${error.message}`, 'error');
+            }
+            
+            // Test with invalid tool ID
+            await authenticate();
+            log('Testing with invalid tool ID...', 'info');
+            try {
+                const response = await fetch(`${API_BASE}/api/voice-sessions`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        tool_id: 'invalid-tool-id',
+                        session_state: 'initializing',
+                        collected_data: {},
+                        field_statuses: {}
+                    })
+                });
+                
+                const data = await response.json();
+                if (!data.success) {
+                    log(`✅ Correctly handled invalid tool ID: ${data.error}`, 'success');
+                } else {
+                    log('❌ Should have failed with invalid tool ID', 'error');
+                }
+            } catch (error) {
+                log(`❌ Error testing invalid tool ID: ${error.message}`, 'error');
+            }
+        }
+        
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+        
+        // Auto-run test on page load
+        window.onload = () => {
+            log('🎤 Voice Session Test Tool Ready!', 'info');
+            log('Click "Test Complete Voice Session Flow" to simulate the full workflow.', 'info');
+        };
+    </script>
+</body>
+</html>

@@ -497,9 +497,44 @@ export class ToolService {
       const response = await apiClient.get('/api/tools');
       
       if (response.data.success && response.data.data) {
-        const tools = response.data.data;
+        const apiTools = response.data.data;
+        
+        // Convert API format to frontend format
+        const tools = apiTools.map((apiTool: any) => {
+          const tool: Tool = {
+            id: apiTool.id,
+            name: apiTool.name,
+            description: apiTool.description || '',
+            initialPrompt: apiTool.initial_prompt || apiTool.initialPrompt || '',
+            conclusionPrompt: apiTool.conclusion_prompt || apiTool.conclusionPrompt || '',
+            intermediatePrompts: apiTool.intermediate_prompts || apiTool.intermediatePrompts || [],
+            fields: (apiTool.fields || []).map((apiField: any) => ({
+              id: apiField.id,
+              name: apiField.name,
+              type: apiField.type || apiField.field_type,
+              required: apiField.required || apiField.is_required || false,
+              instructionalPrompt: apiField.instructional_prompt || apiField.instructionalPrompt || '',
+              options: apiField.options || [],
+              validation: apiField.validation || { clientSide: {} }
+            })),
+            dataHandoff: apiTool.data_handoff || {
+              type: 'api',
+              api: {
+                endpoint: '',
+                method: 'POST',
+                headers: {},
+                payloadStructure: {}
+              }
+            },
+            createdAt: new Date(apiTool.created_at || Date.now()),
+            updatedAt: new Date(apiTool.updated_at || Date.now())
+          };
+          return tool;
+        });
+        
         // Cache all tools locally
         StorageService.saveTools(tools);
+        console.log('✅ Successfully loaded and converted', tools.length, 'tools from API');
         return tools;
       }
       

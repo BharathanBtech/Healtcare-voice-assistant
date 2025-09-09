@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🎤 Voice Timeout Debug</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .status { padding: 15px; margin: 10px 0; border-radius: 6px; font-weight: bold; }
+        .listening { background: #fff3cd; border: 2px solid #ffc107; color: #856404; }
+        .processing { background: #d1ecf1; border: 2px solid #17a2b8; color: #0c5460; }
+        .success { background: #d4edda; border: 2px solid #28a745; color: #155724; }
+        .error { background: #f8d7da; border: 2px solid #dc3545; color: #721c24; }
+        .idle { background: #e9ecef; border: 2px solid #6c757d; color: #495057; }
+        button { padding: 12px 24px; margin: 10px 5px; font-size: 16px; border: none; border-radius: 6px; cursor: pointer; }
+        .start-btn { background: #28a745; color: white; }
+        .stop-btn { background: #dc3545; color: white; }
+        .test-btn { background: #007bff; color: white; }
+        .log { background: #f8f9fa; padding: 15px; border-radius: 6px; margin: 10px 0; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 14px; }
+        .timer { font-size: 24px; font-weight: bold; margin: 20px 0; text-align: center; }
+        .settings { background: #e9ecef; padding: 15px; border-radius: 6px; margin: 15px 0; }
+        .settings label { display: block; margin: 8px 0; }
+        .settings input[type="range"] { width: 200px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Voice Timeout Debug Tool</h1>
+        <p>This tool helps debug speech recognition timeout issues. It will show exactly when speech starts, stops, and times out.</p>
+        
+        <div class="settings">
+            <h3>⚙️ Settings</h3>
+            <label>
+                Max Listen Time: <span id="maxTimeDisplay">5</span>s
+                <input type="range" id="maxTimeSlider" min="1" max="30" value="5" />
+            </label>
+            <label>
+                Silence Timeout: <span id="silenceTimeDisplay">2</span>s
+                <input type="range" id="silenceTimeSlider" min="0.5" max="10" step="0.5" value="2" />
+            </label>
+        </div>
+        
+        <div id="status" class="status idle">🔄 Ready to test</div>
+        <div class="timer" id="timer">00:00</div>
+        
+        <button id="startBtn" class="start-btn" onclick="startTest()">🎤 Start Listening</button>
+        <button id="stopBtn" class="stop-btn" onclick="stopTest()" disabled>🛑 Stop</button>
+        <button class="test-btn" onclick="clearLog()">🗑️ Clear Log</button>
+        
+        <div class="log" id="log"></div>
+    </div>
+    
+    <script>
+        let recognition = null;
+        let isListening = false;
+        let startTime = null;
+        let timerInterval = null;
+        let maxListenTime = 5000;
+        let silenceTimeout = 2000;
+        let speechTimeoutId = null;
+        let silenceTimeoutId = null;
+        
+        // Update settings
+        document.getElementById('maxTimeSlider').oninput = function() {
+            maxListenTime = this.value * 1000;
+            document.getElementById('maxTimeDisplay').textContent = this.value;
+        };
+        
+        document.getElementById('silenceTimeSlider').oninput = function() {
+            silenceTimeout = this.value * 1000;
+            document.getElementById('silenceTimeDisplay').textContent = this.value;
+        };
+        
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            const colors = {
+                info: '#007bff',
+                success: '#28a745',
+                error: '#dc3545',
+                warning: '#ffc107'
+            };
+            
+            logEl.innerHTML += `<div style="color: ${colors[type] || '#000'}"><strong>[${time}]</strong> ${message}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        
+        function updateStatus(status, className) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = status;
+            statusEl.className = `status ${className}`;
+        }
+        
+        function updateTimer() {
+            if (!startTime) return;
+            
+            const elapsed = Date.now() - startTime;
+            const seconds = Math.floor(elapsed / 1000);
+            const milliseconds = Math.floor((elapsed % 1000) / 10);
+            
+            document.getElementById('timer').textContent = 
+                `${String(seconds).padStart(2, '0')}:${String(milliseconds).padStart(2, '0')}`;
+        }
+        
+        function startTest() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                log('❌ Speech Recognition not supported in this browser', 'error');
+                updateStatus('❌ Speech Recognition not supported', 'error');
+                return;
+            }
+            
+            if (isListening) return;
+            
+            try {
+                recognition = new SpeechRecognition();
+                recognition.continuous = true;
+                recognition.interimResults = false;
+                recognition.lang = 'en-US';
+                recognition.maxAlternatives = 1;
+                
+                recognition.onstart = () => {
+                    isListening = true;
+                    startTime = Date.now();
+                    log('🎤 Speech recognition started', 'success');
+                    updateStatus('🎤 Listening...', 'listening');
+                    
+                    // Start timer
+                    timerInterval = setInterval(updateTimer, 50);
+                    
+                    // Set maximum listening time
+                    speechTimeoutId = setTimeout(() => {
+                        log(`⏰ Maximum listen time reached (${maxListenTime/1000}s)`, 'warning');
+                        stopTest();
+                        updateStatus('⏰ Timeout - No speech detected', 'error');
+                    }, maxListenTime);
+                    
+                    // UI updates
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = false;
+                };
+                
+                recognition.onresult = (event) => {
+                    const results = event.results;
+                    let finalTranscript = '';
+                    
+                    for (let i = 0; i < results.length; i++) {
+                        const result = results[i];
+                        if (result.isFinal) {
+                            const transcript = result[0].transcript.trim();
+                            const confidence = result[0].confidence || 0.9;
+                            
+                            if (transcript.length > 0) {
+                                finalTranscript = transcript;
+                                const elapsed = Date.now() - startTime;
+                                
+                                log(`🎯 Final result: "${transcript}" (confidence: ${confidence.toFixed(2)}) after ${elapsed}ms`, 'success');
+                                
+                                // Clear silence timeout since we got speech
+                                if (silenceTimeoutId) {
+                                    clearTimeout(silenceTimeoutId);
+                                    silenceTimeoutId = null;
+                                }
+                                
+                                // Stop immediately after getting final result
+                                stopTest();
+                                updateStatus(`✅ Got: "${transcript}"`, 'success');
+                                return;
+                            }
+                        }
+                    }
+                    
+                    // Set up silence detection if no final result yet
+                    if (silenceTimeoutId) {
+                        clearTimeout(silenceTimeoutId);
+                    }
+                    
+                    silenceTimeoutId = setTimeout(() => {
+                        log(`🔇 Silence detected after ${silenceTimeout/1000}s`, 'warning');
+                        stopTest();
+                        updateStatus('🔇 Stopped due to silence', 'error');
+                    }, silenceTimeout);
+                };
+                
+                recognition.onerror = (event) => {
+                    const elapsed = startTime ? Date.now() - startTime : 0;
+                    log(`❌ Recognition error: ${event.error} after ${elapsed}ms`, 'error');
+                    updateStatus(`❌ Error: ${event.error}`, 'error');
+                    stopTest();
+                };
+                
+                recognition.onend = () => {
+                    const elapsed = startTime ? Date.now() - startTime : 0;
+                    log(`🎤 Recognition ended after ${elapsed}ms`, 'info');
+                    
+                    if (isListening) {
+                        // Recognition ended unexpectedly
+                        updateStatus('🎤 Recognition ended', 'idle');
+                        stopTest();
+                    }
+                };
+                
+                recognition.start();
+                log('🚀 Starting speech recognition test...', 'info');
+                
+            } catch (error) {
+                log(`❌ Failed to start recognition: ${error.message}`, 'error');
+                updateStatus('❌ Failed to start', 'error');
+            }
+        }
+        
+        function stopTest() {
+            isListening = false;
+            
+            // Clear all timeouts
+            if (speechTimeoutId) {
+                clearTimeout(speechTimeoutId);
+                speechTimeoutId = null;
+            }
+            if (silenceTimeoutId) {
+                clearTimeout(silenceTimeoutId);
+                silenceTimeoutId = null;
+            }
+            
+            // Stop timer
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            
+            // Stop recognition
+            if (recognition) {
+                recognition.stop();
+                recognition = null;
+            }
+            
+            // UI updates
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            
+            if (document.getElementById('status').textContent.includes('Listening')) {
+                updateStatus('🔄 Ready to test', 'idle');
+            }
+            
+            log('🛑 Test stopped', 'info');
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            log('🗑️ Log cleared', 'info');
+        }
+        
+        // Initial log
+        window.onload = () => {
+            log('🎤 Voice Timeout Debug Tool ready!', 'info');
+            log('Click "Start Listening" and speak within the timeout period', 'info');
+            log('Watch the timer and logs to see exactly what happens', 'info');
+        };
+    </script>
+</body>
+</html>
