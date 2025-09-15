@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversation Logging Test - Healthcare Voice Agent</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+        
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        
+        .test-section h3 {
+            margin-top: 0;
+            color: #2196f3;
+        }
+        
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        button {
+            padding: 12px 24px;
+            background: #2196f3;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #1976d2;
+        }
+        
+        button.danger {
+            background: #f44336;
+        }
+        
+        button.danger:hover {
+            background: #d32f2f;
+        }
+        
+        .log-display {
+            background: #1e1e1e;
+            color: #fff;
+            padding: 20px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        .info-box {
+            background: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        
+        .step {
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-left: 4px solid #4caf50;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2196f3;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🐛 Conversation Logging Test</h1>
+            <p>Test the conversation logging functionality for debugging voice sessions</p>
+        </div>
+        
+        <div class="info-box">
+            <strong>🎯 Purpose:</strong> This tool demonstrates the conversation logging system that captures
+            the entire dialogue between the agent and user during voice sessions. You can simulate a conversation
+            and then export it as text for debugging purposes.
+        </div>
+        
+        <div class="test-section">
+            <h3>1. Simulate Voice Session</h3>
+            <p>Create a mock conversation to test the logging system:</p>
+            
+            <div class="button-grid">
+                <button onclick="startMockSession()">🎙️ Start Mock Session</button>
+                <button onclick="addUserMessage()">👤 Add User Message</button>
+                <button onclick="addAgentMessage()">🤖 Add Agent Message</button>
+                <button onclick="addSystemEvent()">⚙️ Add System Event</button>
+                <button onclick="endMockSession()">🏁 End Session</button>
+            </div>
+            
+            <div class="stats" id="sessionStats">
+                <div class="stat-card">
+                    <div class="stat-value" id="sessionCount">0</div>
+                    <div class="stat-label">Active Sessions</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="messageCount">0</div>
+                    <div class="stat-label">Total Messages</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="errorCount">0</div>
+                    <div class="stat-label">Errors Logged</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h3>2. Export & View Logs</h3>
+            <p>Export conversation logs in different formats:</p>
+            
+            <div class="button-grid">
+                <button onclick="viewTranscript()">📝 View Transcript</button>
+                <button onclick="viewInsights()">💡 View Debug Insights</button>
+                <button onclick="downloadTranscript()">📥 Download Transcript</button>
+                <button onclick="viewAllSessions()">📚 All Sessions</button>
+                <button class="danger" onclick="clearAllLogs()">🗑️ Clear All Logs</button>
+            </div>
+            
+            <div class="log-display" id="logDisplay">
+                Click a button above to view logs here...
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h3>3. Integration Instructions</h3>
+            <div class="step">
+                <strong>Step 1:</strong> Start a voice session in the main application
+            </div>
+            <div class="step">
+                <strong>Step 2:</strong> Interact with the voice agent (speak and listen to responses)
+            </div>
+            <div class="step">
+                <strong>Step 3:</strong> Click the 🐛 Debug button during or after the session
+            </div>
+            <div class="step">
+                <strong>Step 4:</strong> View the conversation transcript and debugging insights
+            </div>
+            <div class="step">
+                <strong>Step 5:</strong> Download the transcript to share for debugging
+            </div>
+        </div>
+        
+        <div class="info-box">
+            <strong>💡 Pro Tips:</strong>
+            <ul>
+                <li>Logs are automatically saved to localStorage</li>
+                <li>Each session includes timestamps, confidence scores, and context</li>
+                <li>Debug insights show timeline analysis and error patterns</li>
+                <li>Transcripts can be downloaded as .txt files</li>
+                <li>All logging happens without affecting the voice session performance</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // Mock implementation to demonstrate the logging system
+        let currentSessionId = '';
+        let mockSessionCount = 0;
+        let mockMessageCount = 0;
+        let mockErrorCount = 0;
+        
+        // Mock conversation logger for testing
+        const MockConversationLogger = {
+            sessions: new Map(),
+            
+            startSession(sessionId, toolId, toolName) {
+                const session = {
+                    sessionId,
+                    toolId,
+                    toolName,
+                    startTime: new Date().toISOString(),
+                    entries: []
+                };
+                this.sessions.set(sessionId, session);
+                console.log(`🎙️ Mock session started: ${sessionId}`);
+            },
+            
+            logAgentMessage(sessionId, message, context) {
+                const session = this.sessions.get(sessionId);
+                if (!session) return;
+                
+                session.entries.push({
+                    timestamp: new Date().toISOString(),
+                    speaker: 'agent',
+                    message,
+                    context
+                });
+                console.log(`🤖 Agent: "${message.substring(0, 50)}..."`);
+            },
+            
+            logUserMessage(sessionId, message, context, metadata) {
+                const session = this.sessions.get(sessionId);
+                if (!session) return;
+                
+                session.entries.push({
+                    timestamp: new Date().toISOString(),
+                    speaker: 'user',
+                    message,
+                    context,
+                    metadata
+                });
+                console.log(`👤 User: "${message.substring(0, 50)}..."`);
+            },
+            
+            logSystemEvent(sessionId, event, context) {
+                const session = this.sessions.get(sessionId);
+                if (!session) return;
+                
+                session.entries.push({
+                    timestamp: new Date().toISOString(),
+                    speaker: 'agent',
+                    message: `[SYSTEM] ${event}`,
+                    context
+                });
+                console.log(`⚙️ System: ${event}`);
+            },
+            
+            endSession(sessionId, status) {
+                const session = this.sessions.get(sessionId);
+                if (!session) return;
+                
+                session.endTime = new Date().toISOString();
+                session.status = status;
+                console.log(`🏁 Session ended: ${sessionId} (${status})`);
+            },
+            
+            exportSessionAsText(sessionId) {
+                const session = this.sessions.get(sessionId);
+                if (!session) return 'Session not found';
+                
+                let output = '=== VOICE SESSION TRANSCRIPT ===\\n';
+                output += `Session ID: ${session.sessionId}\\n`;
+                output += `Tool: ${session.toolName} (${session.toolId})\\n`;
+                output += `Start Time: ${session.startTime}\\n`;
+                output += `End Time: ${session.endTime || 'In Progress'}\\n`;
+                output += `Status: ${session.status || 'Active'}\\n`;
+                output += '\\n=== CONVERSATION ===\\n';
+                
+                session.entries.forEach((entry) => {
+                    const time = new Date(entry.timestamp).toLocaleTimeString();
+                    const speaker = entry.speaker === 'agent' ? '🤖 AGENT' : '👤 USER';
+                    output += `\\n[${time}] ${speaker}: ${entry.message}\\n`;
+                    
+                    if (entry.context) {
+                        const context = [];
+                        if (entry.context.currentField) context.push(`Field: ${entry.context.currentField}`);
+                        if (entry.context.recognitionConfidence) context.push(`Confidence: ${Math.round(entry.context.recognitionConfidence * 100)}%`);
+                        if (context.length > 0) {
+                            output += `    Context: ${context.join(', ')}\\n`;
+                        }
+                    }
+                });
+                
+                output += '\\n=== END TRANSCRIPT ===\\n';
+                return output;
+            },
+            
+            getAllSessions() {
+                return Array.from(this.sessions.values());
+            }
+        };
+        
+        function startMockSession() {
+            currentSessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+            MockConversationLogger.startSession(currentSessionId, 'mock-tool-id', 'Patient Registration');
+            mockSessionCount++;
+            updateStats();
+            
+            // Add initial system message
+            MockConversationLogger.logSystemEvent(currentSessionId, 'Session started', {
+                currentField: 'firstName',
+                fieldType: 'text',
+                isRequired: true
+            });
+            
+            // Add initial prompt
+            MockConversationLogger.logAgentMessage(currentSessionId, 
+                "Hello! I'm here to help you register as a new patient. I'll collect some basic information from you. Let's start with your full name.", 
+                { currentField: 'firstName', fieldType: 'text', isRequired: true }
+            );
+            
+            mockMessageCount += 2;
+            updateStats();
+            
+            document.getElementById('logDisplay').textContent = 'Mock session started! Use the buttons to add more messages.';
+        }
+        
+        function addUserMessage() {
+            if (!currentSessionId) {
+                alert('Please start a mock session first');
+                return;
+            }
+            
+            const messages = [
+                'My name is John Smith',
+                'John David Smith',
+                'My date of birth is January 15th, 1985',
+                'My phone number is 555-123-4567',
+                'My email is john.smith@email.com'
+            ];
+            
+            const message = messages[Math.floor(Math.random() * messages.length)];
+            MockConversationLogger.logUserMessage(currentSessionId, message, {
+                currentField: 'firstName',
+                recognitionConfidence: 0.85 + Math.random() * 0.15
+            });
+            
+            mockMessageCount++;
+            updateStats();
+        }
+        
+        function addAgentMessage() {
+            if (!currentSessionId) {
+                alert('Please start a mock session first');
+                return;
+            }
+            
+            const messages = [
+                'Thank you. What is your last name?',
+                'Great! What is your date of birth?',
+                'Perfect. Please provide your phone number.',
+                'What is your email address? This is optional but helpful for appointment reminders.',
+                'What is your insurance provider or company name?'
+            ];
+            
+            const message = messages[Math.floor(Math.random() * messages.length)];
+            MockConversationLogger.logAgentMessage(currentSessionId, message, {
+                currentField: 'lastName',
+                fieldType: 'text',
+                isRequired: true
+            });
+            
+            mockMessageCount++;
+            updateStats();
+        }
+        
+        function addSystemEvent() {
+            if (!currentSessionId) {
+                alert('Please start a mock session first');
+                return;
+            }
+            
+            const events = [
+                'Field validation passed',
+                'Moving to next field',
+                'Processing user input',
+                'Confidence threshold met',
+                'Retrying due to low confidence'
+            ];
+            
+            const event = events[Math.floor(Math.random() * events.length)];
+            MockConversationLogger.logSystemEvent(currentSessionId, event, {
+                currentField: 'phoneNumber',
+                fieldType: 'phone'
+            });
+            
+            if (event.includes('Retrying') || event.includes('low confidence')) {
+                mockErrorCount++;
+            }
+            
+            mockMessageCount++;
+            updateStats();
+        }
+        
+        function endMockSession() {
+            if (!currentSessionId) {
+                alert('Please start a mock session first');
+                return;
+            }
+            
+            MockConversationLogger.logSystemEvent(currentSessionId, 'Session completed successfully');
+            MockConversationLogger.logAgentMessage(currentSessionId, 
+                'Thank you for providing your information. Your patient registration is now complete. You should receive a confirmation shortly.'
+            );
+            MockConversationLogger.endSession(currentSessionId, 'completed');
+            
+            mockMessageCount += 2;
+            mockSessionCount--;
+            updateStats();
+            
+            document.getElementById('logDisplay').textContent = 'Mock session ended successfully!';
+        }
+        
+        function viewTranscript() {
+            if (!currentSessionId) {
+                alert('Please start a mock session first');
+                return;
+            }
+            
+            const transcript = MockConversationLogger.exportSessionAsText(currentSessionId);
+            document.getElementById('logDisplay').textContent = transcript;
+        }
+        
+        function viewInsights() {
+            if (!currentSessionId) {
+                alert('Please start a mock session first');
+                return;
+            }
+            
+            const session = MockConversationLogger.sessions.get(currentSessionId);
+            if (!session) return;
+            
+            let insights = '=== DEBUGGING INSIGHTS ===\\n\\n';
+            insights += `⏱️ TIMELINE ANALYSIS:\\n`;
+            insights += `Session Duration: ${session.endTime ? 'Completed' : 'In Progress'}\\n`;
+            insights += `Total Messages: ${session.entries.length}\\n`;
+            
+            const userMessages = session.entries.filter(e => e.speaker === 'user');
+            const agentMessages = session.entries.filter(e => e.speaker === 'agent');
+            
+            insights += `\\n👤 USER ANALYSIS:\\n`;
+            insights += `Messages: ${userMessages.length}\\n`;
+            
+            const avgConfidence = userMessages
+                .filter(m => m.context?.recognitionConfidence)
+                .reduce((sum, m, _, arr) => sum + (m.context.recognitionConfidence / arr.length), 0);
+            
+            if (avgConfidence > 0) {
+                insights += `Average Confidence: ${Math.round(avgConfidence * 100)}%\\n`;
+            }
+            
+            insights += `\\n🤖 AGENT ANALYSIS:\\n`;
+            insights += `Messages: ${agentMessages.length}\\n`;
+            
+            insights += `\\n=== END INSIGHTS ===\\n`;
+            
+            document.getElementById('logDisplay').textContent = insights;
+        }
+        
+        function downloadTranscript() {
+            if (!currentSessionId) {
+                alert('Please start a mock session first');
+                return;
+            }
+            
+            const transcript = MockConversationLogger.exportSessionAsText(currentSessionId);
+            const session = MockConversationLogger.sessions.get(currentSessionId);
+            const filename = `voice-session-${currentSessionId}-${session?.toolName?.replace(/\\s+/g, '-') || 'unknown'}.txt`;
+            
+            const blob = new Blob([transcript], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            alert('Transcript downloaded!');
+        }
+        
+        function viewAllSessions() {
+            const sessions = MockConversationLogger.getAllSessions();
+            let output = `=== ALL SESSIONS (${sessions.length}) ===\\n\\n`;
+            
+            sessions.forEach((session, index) => {
+                output += `${index + 1}. ${session.toolName} (${session.sessionId.substr(0, 8)})\\n`;
+                output += `   Start: ${new Date(session.startTime).toLocaleString()}\\n`;
+                output += `   Status: ${session.status || 'Active'}\\n`;
+                output += `   Messages: ${session.entries.length}\\n\\n`;
+            });
+            
+            if (sessions.length === 0) {
+                output += 'No sessions recorded yet.\\n';
+            }
+            
+            document.getElementById('logDisplay').textContent = output;
+        }
+        
+        function clearAllLogs() {
+            if (confirm('Are you sure you want to clear all conversation logs?')) {
+                MockConversationLogger.sessions.clear();
+                currentSessionId = '';
+                mockSessionCount = 0;
+                mockMessageCount = 0;
+                mockErrorCount = 0;
+                updateStats();
+                document.getElementById('logDisplay').textContent = 'All logs cleared.';
+            }
+        }
+        
+        function updateStats() {
+            document.getElementById('sessionCount').textContent = mockSessionCount;
+            document.getElementById('messageCount').textContent = mockMessageCount;
+            document.getElementById('errorCount').textContent = mockErrorCount;
+        }
+        
+        // Initialize stats on page load
+        updateStats();
+    </script>
+</body>
+</html>

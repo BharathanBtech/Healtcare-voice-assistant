@@ -5,6 +5,7 @@ import { RealTimeDataHandoffService, DataHandoffResult } from './RealTimeDataHan
 import { VoiceSessionService } from './VoiceSessionService';
 import { AIProviderService, STTResult, LLMResponse, TTSResult } from './AIProviderService';
 import { VoiceRecordingService, RecordingResult } from './VoiceRecordingService';
+import { ConversationLogger } from './ConversationLogger';
 
 export interface TranscriptionResult {
   text: string;
@@ -51,6 +52,7 @@ export class VoiceInteractionService {
   private silenceTimeoutId: NodeJS.Timeout | null = null;
   private speechRecognition: any = null; // Browser SpeechRecognition
   private performanceMode = false; // Set to true to disable LLM processing for faster response
+  private conversationSessionId: string = ''; // For conversation logging
 
   private constructor() {
     this.initializeAIServices();
@@ -103,6 +105,25 @@ export class VoiceInteractionService {
       },
       
       onTranscriptionResult: async (result: STTResult) => {
+        // Log user message
+        if (this.conversationSessionId && result.text && result.text.trim()) {
+          const currentField = await this.getCurrentField();
+          ConversationLogger.logUserMessage(
+            this.conversationSessionId,
+            result.text,
+            {
+              currentField: currentField?.name,
+              fieldType: currentField?.type,
+              isRequired: currentField?.required,
+              recognitionConfidence: result.confidence
+            },
+            {
+              recognizedText: result.text,
+              processingTime: Date.now()
+            }
+          );
+        }
+        
         // Use original result immediately, enhance in background
         this.onTranscriptionCallback?.({
           text: result.text,
@@ -143,6 +164,15 @@ export class VoiceInteractionService {
     const session = dbSessionResult.data;
     this.currentSession = session;
     this.initializeSessionProgress(tool);
+    
+    // Start conversation logging
+    this.conversationSessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+    ConversationLogger.startSession(this.conversationSessionId, tool.id, tool.name);
+    ConversationLogger.logSystemEvent(this.conversationSessionId, 'Voice session started', {
+      currentField: tool.fields?.[0]?.name,
+      fieldType: tool.fields?.[0]?.type,
+      isRequired: tool.fields?.[0]?.required
+    });
 
     // Add initial prompt to transcript
     const initialPrompt = tool.initialPrompt || `Let's start collecting information for ${tool.name}.`;
@@ -376,6 +406,7 @@ Generate a brief, natural prompt to ask for this information:`;
     
     if (validation.isValid) {
       // Store the validated value immediately for performance
+      console.log(`✅ Field validation successful - ${currentField.name}: "${validation.value}"`);
       this.sessionProgress.collectedData.set(currentField.name, validation.value);
       this.sessionProgress.fieldStatuses.set(currentField.id, 'completed');
       this.currentSession.collectedData[currentField.name] = validation.value;
@@ -392,10 +423,22 @@ Generate a brief, natural prompt to ask for this information:`;
       });
       
       // Confirm the input with better formatting for dates
-      let confirmationText = `Got it, ${currentField.name}: ${validation.value}`;
-      if (currentField.type === 'date' && validation.value) {
+      // Ensure we have a valid value to display (not placeholder text)
+      let displayValue = validation.value;
+      if (!displayValue || 
+          displayValue === 'processedValue' || 
+          displayValue === 'cleaned and formatted value' ||
+          typeof displayValue !== 'string') {
+        console.warn('Invalid validation value, using original input for confirmation');
+        displayValue = trimmedInput;
+      }
+      
+      let confirmationText = `Got it, ${currentField.name}: ${displayValue}`;
+      console.log(`💬 Confirmation message: "${confirmationText}"`);
+      
+      if (currentField.type === 'date' && displayValue) {
         // Format date for confirmation (YYYY-MM-DD -> more readable format)
-        const dateMatch = validation.value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        const dateMatch = displayValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
         if (dateMatch) {
           const [, year, month, day] = dateMatch;
           const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -461,6 +504,16 @@ Generate a brief, natural prompt to ask for this information:`;
       console.error('Failed to get current tool:', error);
       return null;
     }
+  }
+  
+  private async getCurrentField(): Promise<ToolField | null> {
+    if (!this.sessionProgress) return null;
+    
+    const tool = await this.getCurrentTool();
+    if (!tool || !tool.fields) return null;
+    
+    const currentIndex = this.sessionProgress.currentFieldIndex;
+    return tool.fields[currentIndex] || null;
   }
 
   private async saveSessionProgress(): Promise<void> {
@@ -579,11 +632,23 @@ Generate a brief, natural prompt to ask for this information:`;
     this.currentSession.state = 'completed';
     this.onStateChangeCallback?.('completed');
     
+    // Log session completion
+    if (this.conversationSessionId) {
+      ConversationLogger.logSystemEvent(this.conversationSessionId, 'Session completed successfully');
+      ConversationLogger.endSession(this.conversationSessionId, 'completed');
+    }
+    
     this.cleanup();
   }
 
   public async cancelSession(): Promise<void> {
     if (!this.currentSession) return;
+
+    // Log session cancellation
+    if (this.conversationSessionId) {
+      ConversationLogger.logSystemEvent(this.conversationSessionId, 'Session cancelled by user');
+      ConversationLogger.endSession(this.conversationSessionId, 'abandoned');
+    }
 
     // FIRST: Stop all audio/speech immediately
     this.stopAllAudio();
@@ -613,6 +678,7 @@ Generate a brief, natural prompt to ask for this information:`;
     this.stopListening();
     this.currentSession = null;
     this.sessionProgress = null;
+    this.conversationSessionId = ''; // Clear conversation logging session
   }
   
   private stopAllAudio(): void {
@@ -645,10 +711,10 @@ Generate a brief, natural prompt to ask for this information:`;
     
     try {
       this.speechRecognition = new SpeechRecognition();
-      this.speechRecognition.continuous = true; // Allow continuous listening
-      this.speechRecognition.interimResults = false; // Only final results to avoid confusion
+      this.speechRecognition.continuous = false; // Single utterance mode for better reliability
+      this.speechRecognition.interimResults = true; // Show interim results for user feedback
       this.speechRecognition.lang = 'en-US';
-      this.speechRecognition.maxAlternatives = 1;
+      this.speechRecognition.maxAlternatives = 3; // Get multiple alternatives for better accuracy
       
       this.speechRecognition.onstart = () => {
         console.log('🎤 Browser speech recognition started');
@@ -673,27 +739,51 @@ Generate a brief, natural prompt to ask for this information:`;
         const results = event.results;
         let finalTranscript = '';
         let highestConfidence = 0;
+        let interimTranscript = '';
         
-        // Process all results to get the most recent final result
-        for (let i = 0; i < results.length; i++) {
+        // Process all results to get both interim and final results
+        for (let i = event.resultIndex; i < results.length; i++) {
           const result = results[i];
+          const transcript = result[0].transcript.trim();
+          const confidence = result[0].confidence || 0.9;
+          
           if (result.isFinal) {
-            const transcript = result[0].transcript.trim();
-            const confidence = result[0].confidence || 0.9;
-            
             if (transcript.length > 0) {
               finalTranscript = transcript;
               highestConfidence = confidence;
               
               console.log(`🎯 Final speech result: "${transcript}" (confidence: ${confidence})`);
               
-              // Clear any silence timeout since we got speech
+              // Log user message from browser speech recognition
+              if (this.conversationSessionId && transcript.trim()) {
+                const currentField = await this.getCurrentField();
+                ConversationLogger.logUserMessage(
+                  this.conversationSessionId,
+                  transcript,
+                  {
+                    currentField: currentField?.name,
+                    fieldType: currentField?.type,
+                    isRequired: currentField?.required,
+                    recognitionConfidence: confidence
+                  },
+                  {
+                    recognizedText: transcript,
+                    processingTime: Date.now()
+                  }
+                );
+              }
+              
+              // Clear timeouts since we got final speech
               if (this.silenceTimeoutId) {
                 clearTimeout(this.silenceTimeoutId);
                 this.silenceTimeoutId = null;
               }
+              if (this.speechTimeoutId) {
+                clearTimeout(this.speechTimeoutId);
+                this.speechTimeoutId = null;
+              }
               
-              // Immediately process the result and stop listening
+              // Process the final result
               this.stopListening();
               this.onStateChangeCallback?.('processing');
               
@@ -705,38 +795,86 @@ Generate a brief, natural prompt to ask for this information:`;
               
               return; // Exit early after processing final result
             }
+          } else {
+            // Handle interim results
+            if (transcript.length > 0) {
+              interimTranscript = transcript;
+              console.log(`🎤 Interim: "${transcript}"`);
+              
+              // Show interim transcription to user
+              this.onTranscriptionCallback?.({
+                text: interimTranscript,
+                confidence: confidence,
+                isFinal: false
+              });
+            }
           }
         }
         
-        // If no final result yet, set up silence detection
+        // Reset silence timeout on any speech activity
         if (this.silenceTimeoutId) {
           clearTimeout(this.silenceTimeoutId);
         }
         
+        // Set up silence detection for final results
         this.silenceTimeoutId = setTimeout(() => {
-          console.log('🔇 Silence detected - stopping recognition');
+          console.log('🔇 Silence detected after speech - finalizing');
           this.stopListening();
-          if (finalTranscript) {
+          
+          // If we have interim text but no final, use the interim as final
+          if (!finalTranscript && interimTranscript) {
+            console.log(`📝 Using interim as final: "${interimTranscript}"`);
             this.onTranscriptionCallback?.({
-              text: finalTranscript,
-              confidence: highestConfidence,
+              text: interimTranscript,
+              confidence: 0.8, // Lower confidence since it was interim
               isFinal: true
             });
-          } else {
-            // No speech detected
+          } else if (!finalTranscript) {
+            // No speech detected at all
+            console.log('❌ No speech detected');
             this.onTranscriptionCallback?.({
               text: '',
               confidence: 0,
               isFinal: true
             });
           }
-        }, 2000); // 2 seconds of silence
+        }, 1500); // Reduced to 1.5 seconds for faster response
       };
       
       this.speechRecognition.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
         this.isListening = false;
-        this.onStateChangeCallback?.('error');
+        
+        // Handle specific error types
+        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+          console.error('Microphone permission denied');
+          this.onStateChangeCallback?.('error');
+          // Try to provide a fallback transcription callback to continue the session
+          setTimeout(() => {
+            this.onTranscriptionCallback?.({
+              text: '',
+              confidence: 0,
+              isFinal: true
+            });
+          }, 100);
+        } else if (event.error === 'no-speech') {
+          console.log('No speech detected - this is normal');
+          // Don't treat no-speech as an error, just continue
+          this.onTranscriptionCallback?.({
+            text: '',
+            confidence: 0,
+            isFinal: true
+          });
+        } else {
+          console.error(`Speech recognition error: ${event.error}`);
+          this.onStateChangeCallback?.('error');
+          // Provide empty transcription to continue session flow
+          this.onTranscriptionCallback?.({
+            text: '',
+            confidence: 0,
+            isFinal: true
+          });
+        }
       };
       
       this.speechRecognition.onend = () => {
@@ -766,7 +904,7 @@ Generate a brief, natural prompt to ask for this information:`;
     }
   }
 
-  public startListening(): void {
+  public async startListening(): Promise<void> {
     if (this.isListening) {
       console.warn('Already listening');
       return;
@@ -775,6 +913,24 @@ Generate a brief, natural prompt to ask for this information:`;
     // Clear any existing timeout
     if (this.listeningTimeout) {
       clearTimeout(this.listeningTimeout);
+    }
+    
+    // Check microphone permissions first
+    try {
+      const hasPermission = await this.requestMicrophonePermission();
+      if (!hasPermission) {
+        console.error('Microphone permission denied');
+        this.onStateChangeCallback?.('error');
+        // Still provide empty transcription to continue flow
+        this.onTranscriptionCallback?.({
+          text: '',
+          confidence: 0,
+          isFinal: true
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('Error requesting microphone permission:', error);
     }
     
     // Try browser speech recognition first if available
@@ -845,6 +1001,20 @@ Generate a brief, natural prompt to ask for this information:`;
 
   public async speak(text: string, options?: SpeechSynthesisOptions): Promise<void> {
     try {
+      // Log agent message
+      if (this.conversationSessionId && text && !text.includes('[SYSTEM]')) {
+        const currentField = await this.getCurrentField();
+        ConversationLogger.logAgentMessage(
+          this.conversationSessionId,
+          text,
+          {
+            currentField: currentField?.name,
+            fieldType: currentField?.type,
+            isRequired: currentField?.required
+          }
+        );
+      }
+      
       this.onStateChangeCallback?.('speaking');
       
       // Use AI TTS provider if available
@@ -918,6 +1088,10 @@ Generate a brief, natural prompt to ask for this information:`;
   public getSessionProgress(): SessionProgress | null {
     return this.sessionProgress;
   }
+  
+  public getConversationSessionId(): string {
+    return this.conversationSessionId;
+  }
 
   public setTranscriptionCallback(callback: (result: TranscriptionResult) => void): void {
     this.onTranscriptionCallback = (result: TranscriptionResult) => {
@@ -936,34 +1110,38 @@ Generate a brief, natural prompt to ask for this information:`;
       return false;
     }
     
-    // Common system prompt patterns that should not be treated as user input
-    const systemPromptPatterns = [
-      /please tell me your/i,
-      /what is your/i,
-      /please provide your/i,
-      /please spell out/i,
-      /please choose/i,
-      /let's start collecting/i,
-      /starting session/i,
-      /got it,/i,
-      /thank you/i,
-      /session/i,
-      /completed/i
+    // Be more lenient with transcription validation to capture user input
+    // Only block obvious system prompts, not user responses that might contain similar words
+    const strictSystemPromptPatterns = [
+      /^please tell me your/i,
+      /^what is your/i,
+      /^please provide your/i,
+      /^please spell out/i,
+      /^please choose/i,
+      /^let's start collecting/i,
+      /^starting session/i,
+      /^got it,/i,
+      /session started/i,
+      /session completed/i,
+      /^thank you.*collected/i,
+      /processing your information/i
     ];
     
-    // Check if text matches any system prompt pattern
-    const isSystemPrompt = systemPromptPatterns.some(pattern => pattern.test(text));
+    // Check if text starts with system prompt patterns (more precise matching)
+    const isSystemPrompt = strictSystemPromptPatterns.some(pattern => pattern.test(text));
     
     if (isSystemPrompt) {
+      console.log(`🚫 Rejected system prompt: "${text}"`);
       return false;
     }
     
-    // Additional validation: user input should be relatively short for form fields
-    if (text.length > 200) {
-      console.warn('Transcription too long, likely not user input');
+    // Allow longer user input for voice recognition accuracy
+    if (text.length > 500) {
+      console.warn('Transcription very long, likely not user input');
       return false;
     }
     
+    console.log(`✅ Accepted user transcription: "${text}"`);
     return true;
   }
 
@@ -1030,19 +1208,26 @@ Generate a brief, natural prompt to ask for this information:`;
 
     // Use LLM for intelligent input processing if available
     if (AIProviderService.areProvidersConfigured()) {
-      const llmResult = await this.processInputWithLLM(field, input);
-      if (llmResult.success) {
-        processedValue = llmResult.processedValue;
-        if (llmResult.errors.length > 0) {
-          errors.push(...llmResult.errors);
+      try {
+        const llmResult = await this.processInputWithLLM(field, input);
+        if (llmResult.success && llmResult.processedValue && llmResult.processedValue !== 'processedValue') {
+          processedValue = llmResult.processedValue;
+          if (llmResult.errors.length > 0) {
+            errors.push(...llmResult.errors);
+          }
+          console.log(`🤖 LLM processed "${input}" -> "${processedValue}"`);
+        } else {
+          console.warn('LLM processing failed or returned invalid value, falling back to basic validation:', llmResult.error);
+          // Fall back to basic processing
+          processedValue = await this.processInputBasic(field, input, errors);
         }
-      } else {
-        console.warn('LLM processing failed, falling back to basic validation:', llmResult.error);
-        // Fall back to basic processing
+      } catch (error) {
+        console.warn('LLM processing threw error, falling back to basic validation:', error);
         processedValue = await this.processInputBasic(field, input, errors);
       }
     } else {
       // Use basic processing if LLM is not available
+      console.log(`📝 Using basic processing for "${input}"`);
       processedValue = await this.processInputBasic(field, input, errors);
     }
 
@@ -1139,9 +1324,20 @@ If the input is unclear or invalid, still provide your best interpretation but i
       // Parse the JSON response
       try {
         const result = JSON.parse(llmResponse.data.text.trim());
+        
+        // Validate that we got a meaningful processed value, not the template placeholder
+        let finalProcessedValue = result.processedValue;
+        if (!finalProcessedValue || 
+            finalProcessedValue === 'processedValue' || 
+            finalProcessedValue === 'cleaned and formatted value' ||
+            finalProcessedValue.includes('processedValue')) {
+          console.warn('LLM returned placeholder value, using original input');
+          finalProcessedValue = input.trim();
+        }
+        
         return {
           success: true,
-          processedValue: result.processedValue || input.trim(),
+          processedValue: finalProcessedValue,
           errors: result.errors || [],
         };
       } catch (parseError) {
@@ -1169,16 +1365,35 @@ If the input is unclear or invalid, still provide your best interpretation but i
   
   private extractValueFromLLMResponse(response: string, field: ToolField): string {
     // Simple fallback to extract value when JSON parsing fails
+    console.log('Extracting value from non-JSON LLM response:', response);
+    
     const lines = response.split('\n');
     for (const line of lines) {
       if (line.toLowerCase().includes('value') || line.toLowerCase().includes('result')) {
         // Try to extract a reasonable value
         const match = line.match(/["']([^"']+)["']/);
-        if (match) {
+        if (match && match[1] !== 'processedValue' && match[1] !== 'cleaned and formatted value') {
+          console.log('Extracted value from line:', match[1]);
           return match[1];
         }
       }
     }
+    
+    // Look for any quoted content that might be the processed value
+    const quotedMatches = response.match(/["']([^"']{2,})["']/g);
+    if (quotedMatches) {
+      for (const quotedMatch of quotedMatches) {
+        const value = quotedMatch.replace(/["']/g, '');
+        if (value !== 'processedValue' && 
+            value !== 'cleaned and formatted value' &&
+            value.length > 1) {
+          console.log('Extracted quoted value:', value);
+          return value;
+        }
+      }
+    }
+    
+    console.log('Could not extract meaningful value, returning original response');
     return response.trim();
   }
   
@@ -1211,7 +1426,9 @@ If the input is unclear or invalid, still provide your best interpretation but i
   }
 
   private processTextInput(input: string, field: ToolField, errors: string[]): string {
-    return input.trim();
+    const cleanValue = input.trim();
+    console.log(`📝 Text input processed: "${input}" -> "${cleanValue}"`);
+    return cleanValue;
   }
 
   private processNumberInput(input: string, field: ToolField, errors: string[]): string {
@@ -1739,6 +1956,31 @@ Generate a professional summary (150-200 words) that a healthcare provider would
     } catch (error) {
       console.error('Error in field processing:', error);
       // Continue anyway
+    }
+  }
+  
+  private async requestMicrophonePermission(): Promise<boolean> {
+    try {
+      // Test microphone access by requesting media stream
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // If successful, stop the stream immediately since we only needed to test permissions
+      stream.getTracks().forEach(track => track.stop());
+      
+      console.log('✅ Microphone permission granted');
+      return true;
+    } catch (error: any) {
+      console.error('Microphone permission error:', error);
+      
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        console.error('User denied microphone permission');
+      } else if (error.name === 'NotFoundError') {
+        console.error('No microphone found');
+      } else {
+        console.error('Other microphone error:', error.message);
+      }
+      
+      return false;
     }
   }
 }

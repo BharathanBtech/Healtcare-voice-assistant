@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Recognition Debug Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 5px;
+            font-size: 16px;
+        }
+        .button:hover {
+            background-color: #0056b3;
+        }
+        .button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status.listening {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status.idle {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        .transcription {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            min-height: 100px;
+        }
+        .log {
+            background-color: #343a40;
+            color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Voice Recognition Debug Test</h1>
+        <p>This tool helps debug voice recognition issues in the healthcare voice agent.</p>
+        
+        <div id="support-info">
+            <h3>Browser Support</h3>
+            <div id="browser-support"></div>
+        </div>
+        
+        <div id="controls">
+            <button id="start-btn" class="button">🎤 Start Listening</button>
+            <button id="stop-btn" class="button" disabled>🛑 Stop</button>
+            <button id="clear-btn" class="button">🧹 Clear Log</button>
+            <button id="permission-btn" class="button">🔓 Request Permission</button>
+        </div>
+        
+        <div id="status" class="status idle">Ready to start</div>
+        
+        <div>
+            <h3>Live Transcription</h3>
+            <div id="transcription" class="transcription">
+                <em>Start listening to see transcription...</em>
+            </div>
+        </div>
+        
+        <div>
+            <h3>Debug Log</h3>
+            <div id="log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let recognition = null;
+        let isListening = false;
+        
+        const statusDiv = document.getElementById('status');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const permissionBtn = document.getElementById('permission-btn');
+        const transcriptionDiv = document.getElementById('transcription');
+        const logDiv = document.getElementById('log');
+        const supportDiv = document.getElementById('browser-support');
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logMessage = `[${timestamp}] ${message}`;
+            console.log(logMessage);
+            
+            const logEntry = document.createElement('div');
+            logEntry.style.color = type === 'error' ? '#ff6b6b' : 
+                                 type === 'success' ? '#51cf66' : 
+                                 type === 'warn' ? '#ffd43b' : '#ffffff';
+            logEntry.textContent = logMessage;
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStatus(status, className) {
+            statusDiv.textContent = status;
+            statusDiv.className = `status ${className}`;
+        }
+        
+        function checkBrowserSupport() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const hasMicAccess = navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+            
+            let supportHTML = '';
+            
+            if (SpeechRecognition) {
+                supportHTML += '<div style="color: green;">✅ Speech Recognition: Supported</div>';
+                log('Speech Recognition API is supported', 'success');
+            } else {
+                supportHTML += '<div style="color: red;">❌ Speech Recognition: Not Supported</div>';
+                log('Speech Recognition API is NOT supported', 'error');
+            }
+            
+            if (hasMicAccess) {
+                supportHTML += '<div style="color: green;">✅ Microphone Access: Supported</div>';
+                log('Microphone access API is supported', 'success');
+            } else {
+                supportHTML += '<div style="color: red;">❌ Microphone Access: Not Supported</div>';
+                log('Microphone access API is NOT supported', 'error');
+            }
+            
+            supportDiv.innerHTML = supportHTML;
+        }
+        
+        async function requestMicrophonePermission() {
+            try {
+                log('Requesting microphone permission...');
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+                log('Microphone permission granted!', 'success');
+                return true;
+            } catch (error) {
+                log(`Microphone permission error: ${error.name} - ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        function initializeSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                log('Speech Recognition not available', 'error');
+                return false;
+            }
+            
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+            recognition.maxAlternatives = 3;
+            
+            recognition.onstart = () => {
+                log('Speech recognition started', 'success');
+                updateStatus('🎤 Listening...', 'listening');
+                isListening = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            };
+            
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+                
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const result = event.results[i];
+                    const transcript = result[0].transcript;
+                    const confidence = result[0].confidence || 0.9;
+                    
+                    if (result.isFinal) {
+                        finalTranscript = transcript;
+                        log(`Final result: "${transcript}" (confidence: ${confidence})`, 'success');
+                        transcriptionDiv.innerHTML = `<strong>Final:</strong> ${transcript}<br><em>Confidence: ${Math.round(confidence * 100)}%</em>`;
+                    } else {
+                        interimTranscript = transcript;
+                        log(`Interim result: "${transcript}"`, 'info');
+                        transcriptionDiv.innerHTML = `<em>Interim:</em> ${transcript}<br><small>Confidence: ${Math.round(confidence * 100)}%</small>`;
+                    }
+                }
+            };
+            
+            recognition.onerror = (event) => {
+                log(`Speech recognition error: ${event.error}`, 'error');
+                updateStatus(`❌ Error: ${event.error}`, 'error');
+                
+                if (event.error === 'no-speech') {
+                    log('No speech detected - this is normal', 'warn');
+                } else if (event.error === 'not-allowed') {
+                    log('Microphone permission denied', 'error');
+                } else if (event.error === 'network') {
+                    log('Network error occurred', 'error');
+                }
+                
+                stopListening();
+            };
+            
+            recognition.onend = () => {
+                log('Speech recognition ended', 'info');
+                stopListening();
+            };
+            
+            return true;
+        }
+        
+        async function startListening() {
+            if (isListening) {
+                log('Already listening', 'warn');
+                return;
+            }
+            
+            const hasPermission = await requestMicrophonePermission();
+            if (!hasPermission) {
+                updateStatus('❌ Microphone permission required', 'error');
+                return;
+            }
+            
+            if (!recognition && !initializeSpeechRecognition()) {
+                updateStatus('❌ Speech recognition not available', 'error');
+                return;
+            }
+            
+            try {
+                log('Starting speech recognition...');
+                recognition.start();
+            } catch (error) {
+                log(`Error starting recognition: ${error.message}`, 'error');
+                updateStatus('❌ Failed to start', 'error');
+            }
+        }
+        
+        function stopListening() {
+            if (!isListening) {
+                return;
+            }
+            
+            if (recognition) {
+                recognition.stop();
+            }
+            
+            isListening = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateStatus('⏹️ Stopped', 'idle');
+            log('Stopped listening');
+        }
+        
+        function clearLog() {
+            logDiv.innerHTML = '';
+            transcriptionDiv.innerHTML = '<em>Cleared - start listening to see transcription...</em>';
+            log('Log cleared');
+        }
+        
+        // Event listeners
+        startBtn.addEventListener('click', startListening);
+        stopBtn.addEventListener('click', stopListening);
+        clearBtn.addEventListener('click', clearLog);
+        permissionBtn.addEventListener('click', requestMicrophonePermission);
+        
+        // Initialize
+        checkBrowserSupport();
+        log('Voice Recognition Debug Test initialized');
+    </script>
+</body>
+</html>

@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Tool, VoiceInteractionState } from '@/types';
 import { ToolService } from '@/services/ToolService';
+import { ConversationLogger } from '@/services/ConversationLogger';
+import ConversationDebugPanel from '@/components/debug/ConversationDebugPanel';
 import VoiceInteractionService, { 
   TranscriptionResult, 
   VoiceInteractionConfig,
@@ -26,6 +28,8 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
   const [sessionProgress, setSessionProgress] = useState<SessionProgress | null>(null);
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [isSessionActive, setIsSessionActive] = useState(false);
+  const [debugPanelOpen, setDebugPanelOpen] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string>('');
   
   const voiceService = useRef(VoiceInteractionService.getInstance());
   const transcriptionHistoryRef = useRef<string[]>([]);
@@ -81,8 +85,19 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
         setInterimTranscription('');
         transcriptionHistoryRef.current.push(result.text);
         
-        // Process the input if confidence is high enough
-        if (result.confidence >= defaultConfig.confidenceThreshold) {
+        // User input logging is now handled by VoiceInteractionService
+        
+        // Process the input even with lower confidence for better user experience
+        // The VoiceInteractionService will handle validation and cleanup
+        if (result.confidence >= 0.5 || result.text.trim().length > 0) {
+          handleUserInput(result.text);
+        } else if (currentSessionId) {
+          // Log low confidence recognition
+          ConversationLogger.logSystemEvent(currentSessionId, `Low confidence recognition: ${result.confidence}`, {
+            recognitionConfidence: result.confidence,
+            errorType: 'low_confidence'
+          });
+          // Still try to process the input
           handleUserInput(result.text);
         }
       } else {
@@ -92,6 +107,8 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
 
     service.setStateChangeCallback((state: VoiceInteractionState) => {
       setInteractionState(state);
+      
+      // State changes and completion are now handled by VoiceInteractionService
       
       // Update session progress when state changes
       const progress = service.getSessionProgress();
@@ -112,6 +129,8 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
       const prompt = currentField.instructionalPrompt || 
         `Please provide your ${currentField.name}.`;
       setCurrentPrompt(prompt);
+      
+      // Agent prompts are now logged by VoiceInteractionService
     }
   };
 
@@ -126,6 +145,11 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
       setCurrentPrompt('Starting session...');
       
       const session = await voiceService.current.startSession(tool, defaultConfig);
+      
+      // Get conversation session ID from the service
+      const sessionId = voiceService.current.getConversationSessionId();
+      setCurrentSessionId(sessionId);
+      
       toast.success('Voice session started');
       
       // Start processing fields
@@ -153,22 +177,33 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
     setInteractionState('paused');
   };
 
-  const resumeSession = () => {
-    voiceService.current.startListening();
-    setInteractionState('listening');
+  const resumeSession = async () => {
+    try {
+      await voiceService.current.startListening();
+      setInteractionState('listening');
+    } catch (error) {
+      console.error('Failed to resume session:', error);
+      toast.error('Failed to resume voice listening');
+    }
   };
 
   const cancelSession = async () => {
     try {
       await voiceService.current.cancelSession();
+      
+      // Session cancellation is now handled by VoiceInteractionService
+      
       setIsSessionActive(false);
       setSessionProgress(null);
       setTranscription('');
       setInterimTranscription('');
+      setCurrentSessionId('');
       toast('Session cancelled', { icon: 'ℹ️' });
     } catch (error) {
       console.error('Failed to cancel session:', error);
       toast.error('Failed to cancel session');
+      
+      // Error logging is handled by VoiceInteractionService
     }
   };
 
@@ -273,13 +308,22 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
               </div>
               <div className="voice-controls">
                 {!isSessionActive ? (
-                  <button 
-                    className="btn btn-primary btn-lg"
-                    onClick={startSession}
-                    disabled={!voiceService.current.isSpeechRecognitionSupported()}
-                  >
-                    🎤 Start Voice Session
-                  </button>
+                  <>
+                    <button 
+                      className="btn btn-primary btn-lg"
+                      onClick={startSession}
+                      disabled={!voiceService.current.isSpeechRecognitionSupported()}
+                    >
+                      🎤 Start Voice Session
+                    </button>
+                    <button 
+                      className="btn btn-secondary"
+                      onClick={() => setDebugPanelOpen(true)}
+                      title="Open Debug Panel"
+                    >
+                      🐛 Debug
+                    </button>
+                  </>
                 ) : (
                   <div className="session-controls">
                     {interactionState === 'listening' ? (
@@ -303,6 +347,14 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
                       onClick={cancelSession}
                     >
                       🛑 Cancel
+                    </button>
+                    
+                    <button 
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setDebugPanelOpen(true)}
+                      title="View Conversation Log"
+                    >
+                      🐛
                     </button>
                   </div>
                 )}
@@ -425,6 +477,13 @@ const VoiceInteraction: React.FC<VoiceInteractionProps> = ({ toolId: propToolId 
           </div>
         </div>
       </div>
+      
+      {/* Debug Panel */}
+      <ConversationDebugPanel
+        sessionId={currentSessionId}
+        isOpen={debugPanelOpen}
+        onClose={() => setDebugPanelOpen(false)}
+      />
     </div>
   );
 };
